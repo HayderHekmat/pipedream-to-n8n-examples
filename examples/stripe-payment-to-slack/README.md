@@ -113,6 +113,31 @@ After activation, you must configure the signing secret for webhook verification
 
 ### Testing
 
+#### Test with Pinned Sample Data (Recommended First Step)
+
+The workflow includes pinned sample data that lets you test without connecting to Stripe:
+
+1. Import the workflow into n8n
+2. In the workflow editor, click **"Execute Workflow"** (top-right)
+3. The workflow will run using the pre-configured sample `payment_intent.succeeded` event
+4. Check each node's output:
+   - **Stripe Trigger**: Should show the sample event data
+   - **Format Payment Data**: Should show formatted payment details ($59.99 USD, [email protected])
+   - **Send to Slack**: Will attempt to send (requires configured Slack credentials)
+
+**Using "Execute Node" for individual testing:**
+1. Click on the **Stripe Trigger** node
+2. Click **"Execute step"** button above the node
+3. The node will output the pinned sample data
+4. You can then test downstream nodes one at a time
+
+**Sample event file**: The same sample data is saved in [`sample-event.json`](./sample-event.json) for reference. This shows the exact structure of a `payment_intent.succeeded` event that the Stripe Trigger outputs.
+
+**Why pinned data matters**: The Stripe Trigger is a webhook node that normally waits for external events. Pinned data lets you test the entire workflow logic without activating the trigger or receiving real webhooks. This is essential for:
+- Testing during development
+- Verifying workflow logic before activation
+- Troubleshooting issues without affecting production
+
 #### Test with Stripe's Webhook Testing Tool
 
 1. In Stripe Dashboard, go to **Developers** → **Webhooks**
@@ -174,28 +199,37 @@ In Slack:
   {{ $json.amount }}
   ```
 
-#### 4. Code Node Differences
+#### 4. Slack Node Parameters
+- **n8n requires** explicit `resource` and `operation` parameters that Pipedream abstracts away
+- For sending messages, you must set:
+  - `resource`: `"message"`
+  - `operation`: `"post"` (not "send" - that's the display name)
+- **Critical**: Missing these parameters causes the node to fail import with a blank icon
+- Source: [Slack MessageDescription.ts](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Slack/V2/MessageDescription.ts)
+
+#### 5. Code Node Differences
 - **Pipedream**: Use `$.export()` to pass data to next step
 - **n8n**: Use `return { json: { ... } }` to output data
 - **Pipedream**: Access previous steps via `steps.step_name.$return_value`
 - **n8n**: Access previous nodes via `$json.field` or `{{ $node["Node Name"].json.field }}`
+- **Error handling**: The n8n Code node includes defensive checks to validate Stripe event structure and provide clear error messages if data is missing or malformed
 
-#### 5. Amount Formatting
+#### 6. Amount Formatting
 - Both Stripe and n8n receive amounts in **cents**
 - The Code node divides by 100 to display in dollars/euros
 - Make sure to format consistently with your currency
 
-#### 6. Test vs. Live Mode
+#### 7. Test vs. Live Mode
 - **Pipedream**: Can connect one Stripe account per workflow
 - **n8n**: Use separate credentials for test and live mode
 - **Tip**: Create two workflows (one for test, one for live) or use environment-based credential selection
 
-#### 7. Retries and Idempotency
+#### 8. Retries and Idempotency
 - **Pipedream**: Automatic retries with exponential backoff
 - **n8n**: Configure retries per node (click node → Settings → Continue on Fail, Retry on Fail)
 - **Recommendation**: Enable "Retry on Fail" on the Slack node with 3-5 retries
 
-#### 8. Error Handling
+#### 9. Error Handling
 - **Pipedream**: Errors are logged in Pipedream dashboard; optional error notifications
 - **n8n**: Configure error workflows or use n8n's error notification settings (Settings → Community Nodes → Error Trigger)
 

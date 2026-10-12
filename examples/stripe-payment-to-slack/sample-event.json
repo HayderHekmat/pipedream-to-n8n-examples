@@ -1,0 +1,68 @@
+{
+  "id": "evt_1NXyz2AbCdEfGhIj",
+  "object": "event",
+  "api_version": "2024-09-30.acacia",
+  "created": 1715600000,
+  "type": "payment_intent.succeeded",
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "pi_3Q4R5S6T7U8V9W0X",
+      "object": "payment_intent",
+      "amount": 5999,
+      "amount_capturable": 0,
+      "amount_received": 5999,
+      "currency": "usd",
+      "status": "succeeded",
+      "customer": "cus_ABC123DEF456",
+      "description": "Sample payment for testing",
+      "metadata": {
+        "order_id": "order_12345"
+      },
+      "payment_method": "pm_1ABC2DEF3GHI4JKL",
+      "payment_method_types": ["card"],
+      "receipt_email": "[email protected]",
+      "charges": {
+        "object": "list",
+        "data": [
+          {
+            "id": "ch_3ABC4DEF5GHI6JKL",
+            "object": "charge",
+            "amount": 5999,
+            "amount_captured": 5999,
+            "amount_refunded": 0,
+            "billing_details": {
+              "address": {
+                "city": "San Francisco",
+                "country": "US",
+                "line1": "123 Market St",
+                "line2": null,
+                "postal_code": "94103",
+                "state": "CA"
+              },
+              "email": "[email protected]",
+              "name": "Jane Doe",
+              "phone": "+14155551234"
+            },
+            "currency": "usd",
+            "paid": true,
+            "payment_method": "pm_1ABC2DEF3GHI4JKL",
+            "receipt_url": "https://pay.stripe.com/receipts/payment/ABC123",
+            "status": "succeeded"
+          }
+        ],
+        "has_more": false,
+        "total_count": 1,
+        "url": "/v1/charges?payment_intent=pi_3Q4R5S6T7U8V9W0X"
+      },
+      "created": 1715600000,
+      "confirmation_method": "automatic",
+      "capture_method": "automatic"
+    }
+  },
+  "pending_webhooks": 1,
+  "request": {
+    "id": "req_ABC123DEF456",
+    "idempotency_key": "key_xyz789"
+  }
+}
