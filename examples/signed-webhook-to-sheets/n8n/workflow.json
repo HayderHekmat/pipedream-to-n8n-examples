@@ -1,0 +1,255 @@
+{
+  "name": "Signed Webhook to Sheets",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [240, 360],
+      "webhookId": "example-webhook-id",
+      "parameters": {
+        "path": "github-push",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": true
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Verify Signature",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 360],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\n\n// Get the signature from headers\nconst signature = $input.first().json.headers['x-hub-signature-256'];\nconst rawBody = $input.first().json.body;\n\n// Get secret from environment variable or credential\n// In production, use: $env.GITHUB_WEBHOOK_SECRET or credential\nconst secret = $env.GITHUB_WEBHOOK_SECRET || 'your-secret-here';\n\nif (!signature) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing x-hub-signature-256 header',\n      body: $input.first().json.body\n    }\n  }];\n}\n\n// Compute HMAC-SHA256 of raw body\nconst hmac = crypto\n  .createHmac('sha256', secret)\n  .update(rawBody, 'utf8')\n  .digest('hex');\n\nconst expected = `sha256=${hmac}`;\n\n// Constant-time comparison\nlet isValid = false;\ntry {\n  isValid = crypto.timingSafeEqual(\n    Buffer.from(signature),\n    Buffer.from(expected)\n  );\n} catch (e) {\n  // Lengths differ, definitely invalid\n  isValid = false;\n}\n\nreturn [{\n  json: {\n    verified: isValid,\n    body: $input.first().json.body,\n    signature: signature,\n    expected: expected\n  }\n}];"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Check Signature",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [680, 360],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4",
+      "name": "Transform Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 260],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Extract relevant fields from GitHub push event\nconst event = $input.first().json.body;\n\n// Safely extract fields with fallbacks\nconst eventId = event.after || event.head_commit?.id || `unknown-${Date.now()}`;\nconst repository = event.repository?.full_name || 'unknown';\nconst pusher = event.pusher?.name || event.pusher?.email || 'unknown';\nconst ref = event.ref || 'unknown';\nconst commitsCount = event.commits?.length || 0;\nconst timestamp = new Date().toISOString();\nconst url = event.compare || event.repository?.html_url || '';\n\nreturn [{\n  json: {\n    event_id: eventId,\n    repository: repository,\n    pusher: pusher,\n    ref: ref,\n    commits_count: commitsCount,\n    timestamp: timestamp,\n    url: url\n  }\n}];"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Write to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1120, 260],
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "mode": "list",
+          "value": "={{ $env.GOOGLE_SHEET_ID }}"
+        },
+        "sheetName": {
+          "mode": "list",
+          "value": "Sheet1"
+        },
+        "dataMode": "define",
+        "columnToMatchOn": "event_id",
+        "valueToMatchOn": "={{ $json.event_id }}",
+        "fieldsUi": {
+          "values": [
+            {
+              "fieldId": "event_id",
+              "fieldValue": "={{ $json.event_id }}"
+            },
+            {
+              "fieldId": "repository",
+              "fieldValue": "={{ $json.repository }}"
+            },
+            {
+              "fieldId": "pusher",
+              "fieldValue": "={{ $json.pusher }}"
+            },
+            {
+              "fieldId": "ref",
+              "fieldValue": "={{ $json.ref }}"
+            },
+            {
+              "fieldId": "commits_count",
+              "fieldValue": "={{ $json.commits_count }}"
+            },
+            {
+              "fieldId": "timestamp",
+              "fieldValue": "={{ $json.timestamp }}"
+            },
+            {
+              "fieldId": "url",
+              "fieldValue": "={{ $json.url }}"
+            }
+          ]
+        },
+        "options": {
+          "useAppend": true
+        }
+      },
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": null,
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "id": "6",
+      "name": "Respond Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [1340, 260],
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseBody": "={{ { \"success\": true, \"event_id\": $json.event_id, \"action\": \"processed\" } }}"
+        }
+      }
+    },
+    {
+      "id": "7",
+      "name": "Respond Invalid Signature",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [900, 460],
+      "parameters": {
+        "options": {
+          "responseCode": 401,
+          "responseBody": "={{ { \"success\": false, \"error\": \"Invalid signature\" } }}"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Signature": {
+      "main": [
+        [
+          {
+            "node": "Check Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Signature": {
+      "main": [
+        [
+          {
+            "node": "Transform Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transform Payload": {
+      "main": [
+        [
+          {
+            "node": "Write to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Respond Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "any",
+    "errorWorkflow": "",
+    "timezone": "America/New_York",
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  },
+  "staticData": {},
+  "pinData": {
+    "Webhook": [
+      {
+        "json": {
+          "headers": {
+            "x-hub-signature-256": "sha256=example_signature_would_be_here",
+            "x-github-event": "push",
+            "content-type": "application/json"
+          },
+          "body": "{\"ref\":\"refs/heads/main\",\"before\":\"abc123\",\"after\":\"def456\",\"repository\":{\"full_name\":\"octocat/Hello-World\",\"html_url\":\"https://github.com/octocat/Hello-World\"},\"pusher\":{\"name\":\"octocat\",\"email\":\"octocat@github.com\"},\"head_commit\":{\"id\":\"def456\",\"message\":\"Update README.md\",\"timestamp\":\"2024-10-14T10:30:00Z\"},\"commits\":[{\"id\":\"def456\",\"message\":\"Update README.md\"}],\"compare\":\"https://github.com/octocat/Hello-World/compare/abc123...def456\"}"
+        }
+      }
+    ]
+  },
+  "tags": [],
+  "meta": {
+    "instanceId": "example"
+  }
+}

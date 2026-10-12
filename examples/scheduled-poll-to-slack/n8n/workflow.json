@@ -1,0 +1,194 @@
+{
+  "name": "Scheduled Poll to Slack",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [240, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2",
+      "name": "Fetch NASA RSS",
+      "type": "n8n-nodes-base.rssFeedReadTrigger",
+      "typeVersion": 1,
+      "position": [460, 300],
+      "parameters": {
+        "feedUrl": "https://www.nasa.gov/rss/dyn/breaking_news.rss",
+        "options": {}
+      }
+    },
+    {
+      "id": "3",
+      "name": "Remove Duplicates",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [680, 300],
+      "parameters": {
+        "compare": "selectedFields",
+        "fieldsToCompare": {
+          "fields": [
+            {
+              "fieldName": "guid"
+            }
+          ]
+        },
+        "options": {
+          "removeOtherFields": false,
+          "removeItemsSeenInPreviousExecutions": true,
+          "maxItemsToRetain": 1000
+        }
+      }
+    },
+    {
+      "id": "4",
+      "name": "Format for Slack",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Format RSS items for Slack messages\nconst items = $input.all();\n\nif (items.length === 0) {\n  // No new items, stop workflow\n  return [];\n}\n\nconst formatted = items.map(item => {\n  const json = item.json;\n  \n  // Safely extract and truncate description\n  let description = '';\n  if (json.description) {\n    description = json.description.substring(0, 200);\n    if (json.description.length > 200) {\n      description += '...';\n    }\n  }\n  \n  // Build Slack-formatted message\n  const message = [\n    `*${json.title || 'Untitled'}*`,\n    description,\n    json.link ? `<${json.link}|Read more>` : ''\n  ].filter(Boolean).join('\\n');\n  \n  return {\n    json: {\n      message: message,\n      title: json.title,\n      link: json.link,\n      guid: json.guid,\n      pubDate: json.pubDate\n    }\n  };\n});\n\nreturn formatted;"
+      }
+    },
+    {
+      "id": "5",
+      "name": "Post to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [1120, 300],
+      "parameters": {
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "mode": "name",
+          "value": "#nasa-news"
+        },
+        "messageType": "text",
+        "text": "={{ $json.message }}",
+        "otherOptions": {}
+      },
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack OAuth2 API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch NASA RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch NASA RSS": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Format for Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Slack": {
+      "main": [
+        [
+          {
+            "node": "Post to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "",
+    "timezone": "America/New_York",
+    "saveExecutionProgress": false,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "executionTimeout": 3600
+  },
+  "staticData": {
+    "node:Remove Duplicates": {
+      "removeDuplicatesHistory": []
+    }
+  },
+  "pinData": {
+    "Fetch NASA RSS": [
+      {
+        "json": {
+          "guid": "http://www.nasa.gov/news-release/2024/nasa-launches-mission-to-study-asteroid-sample",
+          "title": "NASA Launches Mission to Study Asteroid Sample",
+          "link": "http://www.nasa.gov/news/asteroid-mission-launch",
+          "description": "NASA successfully launched a groundbreaking mission to study pristine samples from an asteroid, marking a significant milestone in planetary science. The spacecraft will travel millions of miles to collect and return samples that could reveal secrets about the early solar system.",
+          "pubDate": "Mon, 14 Oct 2024 14:30:00 GMT",
+          "creator": "NASA News",
+          "category": ["Space Exploration", "Science"]
+        }
+      },
+      {
+        "json": {
+          "guid": "http://www.nasa.gov/news-release/2024/james-webb-discovers-water-on-exoplanet",
+          "title": "James Webb Space Telescope Discovers Water Vapor on Distant Exoplanet",
+          "link": "http://www.nasa.gov/news/webb-water-discovery",
+          "description": "The James Webb Space Telescope has detected signs of water vapor in the atmosphere of an exoplanet 700 light-years away, providing crucial insights into the potential for life beyond our solar system. This discovery represents a major breakthrough in the search for habitable worlds.",
+          "pubDate": "Mon, 14 Oct 2024 10:15:00 GMT",
+          "creator": "NASA News",
+          "category": ["Exoplanets", "James Webb"]
+        }
+      },
+      {
+        "json": {
+          "guid": "http://www.nasa.gov/news-release/2024/artemis-crew-training-update",
+          "title": "Artemis Crew Completes Underwater Training for Moon Mission",
+          "link": "http://www.nasa.gov/news/artemis-training",
+          "description": "NASA's Artemis astronauts completed a week of intensive underwater training simulating lunar surface operations. The crew practiced emergency procedures, equipment deployment, and sample collection techniques in preparation for humanity's return to the Moon.",
+          "pubDate": "Sun, 13 Oct 2024 16:45:00 GMT",
+          "creator": "NASA News",
+          "category": ["Artemis", "Human Spaceflight"]
+        }
+      }
+    ]
+  },
+  "tags": [],
+  "meta": {
+    "instanceId": "example"
+  }
+}

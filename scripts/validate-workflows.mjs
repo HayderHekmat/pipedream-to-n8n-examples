@@ -40,6 +40,13 @@ const NODE_PATH_MAP = {
   'n8n-nodes-base.set': 'Set/Set.node.js',
   'n8n-nodes-base.httpRequest': 'HttpRequest/V3/HttpRequestV3.node.js',
   'n8n-nodes-base.manualTrigger': 'ManualTrigger/ManualTrigger.node.js',
+  'n8n-nodes-base.scheduleTrigger': 'Schedule/ScheduleTrigger.node.js',
+  'n8n-nodes-base.rssFeedReadTrigger': 'RssFeedRead/RssFeedReadTrigger.node.js',
+  'n8n-nodes-base.removeDuplicates': 'Transform/RemoveDuplicates/RemoveDuplicates.node.js',
+  'n8n-nodes-base.webhook': 'Webhook/Webhook.node.js',
+  'n8n-nodes-base.if': 'If/If.node.js',
+  'n8n-nodes-base.googleSheets': 'Google/Sheet/GoogleSheets.node.js',
+  'n8n-nodes-base.respondToWebhook': 'RespondToWebhook/RespondToWebhook.node.js',
 };
 
 /**
