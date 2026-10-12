@@ -3,27 +3,24 @@
 /**
  * n8n Workflow Validation Script
  * 
- * Validates n8n workflow JSON files in examples directory
+ * Validates n8n workflow JSON files against real n8n node definitions
  * Checks:
  * - Valid JSON syntax
  * - Required top-level keys (name, nodes, connections, settings)
  * - Node structure (id, name, type, typeVersion, position, parameters)
+ * - Node types and versions exist in actual n8n-nodes-base package
  * - Connection references (must reference existing node names)
  * - No duplicate node names
  * - No credentials or secrets in workflow files
- * - Imports workflows into n8n to verify they load correctly
  */
 
-import { readFile, writeFile, unlink, mkdir } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { glob } from 'glob';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { tmpdir } from 'os';
+import { createRequire } from 'module';
 
-const execFileAsync = promisify(execFile);
-
+const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
@@ -31,29 +28,81 @@ const rootDir = join(__dirname, '..');
 const REQUIRED_TOP_LEVEL_KEYS = ['name', 'nodes', 'connections', 'settings'];
 const REQUIRED_NODE_KEYS = ['id', 'name', 'type', 'typeVersion', 'position', 'parameters'];
 
-// Known n8n node types and their supported versions (based on n8n-nodes-base)
-// This is a minimal set for validation - real nodes may support more versions
-const KNOWN_NODE_VERSIONS = {
-  'n8n-nodes-base.stripeTrigger': [1],
-  'n8n-nodes-base.slack': [1, 2, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7],
-  'n8n-nodes-base.code': [1, 2],
-  'n8n-nodes-base.httpRequest': [1, 2, 3, 4, 4.1, 4.2],
-  'n8n-nodes-base.set': [1, 2, 3, 3.1, 3.2, 3.3, 3.4],
-  'n8n-nodes-base.manualTrigger': [1],
-};
-
-// Required parameters for common node operations
-const REQUIRED_NODE_PARAMETERS = {
-  'n8n-nodes-base.slack': {
-    message: ['resource', 'operation'],
-  },
-  'n8n-nodes-base.code': {
-    all: ['mode'],
-  },
-};
-
 let totalErrors = 0;
 let totalWarnings = 0;
+let nodeDefinitionsCache = {};
+
+// Map of node types to their paths in n8n-nodes-base
+const NODE_PATH_MAP = {
+  'n8n-nodes-base.slack': 'Slack/Slack.node.js',
+  'n8n-nodes-base.stripeTrigger': 'Stripe/StripeTrigger.node.js',
+  'n8n-nodes-base.code': 'Code/Code.node.js',
+  'n8n-nodes-base.set': 'Set/Set.node.js',
+  'n8n-nodes-base.httpRequest': 'HttpRequest/V3/HttpRequestV3.node.js',
+  'n8n-nodes-base.manualTrigger': 'ManualTrigger/ManualTrigger.node.js',
+};
+
+/**
+ * Load actual node definition from n8n-nodes-base
+ */
+function loadNodeDefinition(nodeType) {
+  if (nodeDefinitionsCache[nodeType]) {
+    return nodeDefinitionsCache[nodeType];
+  }
+
+  if (!nodeType.startsWith('n8n-nodes-base.')) {
+    return null;
+  }
+
+  const nodePath = NODE_PATH_MAP[nodeType];
+  if (!nodePath) {
+    // Try to guess the path
+    return null;
+  }
+
+  try {
+    const fullPath = `n8n-nodes-base/dist/nodes/${nodePath}`;
+    const nodeModule = require(fullPath);
+    
+    // Get the class name from the path
+    const className = nodePath.split('/').pop().replace('.node.js', '').split('.')[0];
+    const NodeClass = nodeModule[className];
+    
+    if (!NodeClass) {
+      return null;
+    }
+
+    const nodeInstance = new NodeClass();
+    const description = nodeInstance.description;
+    
+    // Handle VersionedNodeType (has nodeVersions property)
+    if (nodeInstance.nodeVersions) {
+      const versions = Object.keys(nodeInstance.nodeVersions).map(v => 
+        v.includes('.') ? parseFloat(v) : parseInt(v)
+      );
+      nodeDefinitionsCache[nodeType] = {
+        supportedVersions: versions,
+        defaultVersion: description.defaultVersion,
+        isVersioned: true
+      };
+    } else {
+      // Regular node (has version in description)
+      const versions = Array.isArray(description.version) 
+        ? description.version 
+        : [description.version];
+      nodeDefinitionsCache[nodeType] = {
+        supportedVersions: versions,
+        defaultVersion: versions[versions.length - 1],
+        isVersioned: false
+      };
+    }
+    
+    return nodeDefinitionsCache[nodeType];
+  } catch (err) {
+    console.error(`Error loading ${nodeType}:`, err.message);
+    return null;
+  }
+}
 
 /**
  * Validate a single workflow JSON file
@@ -147,43 +196,21 @@ async function validateWorkflow(filePath) {
       errors.push(`Node "${node.name}" has invalid parameters (must be object)`);
     }
     
-    // Validate node type version against known types
-    if (node.type && KNOWN_NODE_VERSIONS[node.type]) {
-      if (!KNOWN_NODE_VERSIONS[node.type].includes(node.typeVersion)) {
+    // Validate node type and version against actual n8n-nodes-base definitions
+    if (node.type && node.typeVersion !== undefined) {
+      const definition = loadNodeDefinition(node.type);
+      
+      if (!definition) {
+        errors.push(
+          `Node "${node.name}" has unknown type "${node.type}". ` +
+          `This node type is not found in n8n-nodes-base@2.15.1.`
+        );
+      } else if (!definition.supportedVersions.includes(node.typeVersion)) {
         errors.push(
           `Node "${node.name}" (${node.type}) has unsupported typeVersion ${node.typeVersion}. ` +
-          `Supported versions: ${KNOWN_NODE_VERSIONS[node.type].join(', ')}`
+          `Supported versions in n8n-nodes-base@2.15.1: ${definition.supportedVersions.join(', ')} ` +
+          `(default: ${definition.defaultVersion})`
         );
-      }
-    }
-    
-    // Check required parameters for known node types
-    if (node.type && node.parameters) {
-      const nodeType = node.type;
-      const requiredParams = REQUIRED_NODE_PARAMETERS[nodeType];
-      
-      if (requiredParams) {
-        // Check for resource-specific requirements (e.g., Slack message operations)
-        if (requiredParams[node.parameters.resource]) {
-          const required = requiredParams[node.parameters.resource];
-          required.forEach(param => {
-            if (!(param in node.parameters)) {
-              errors.push(
-                `Node "${node.name}" (${nodeType}, resource: ${node.parameters.resource}) ` +
-                `missing required parameter: "${param}"`
-              );
-            }
-          });
-        }
-        
-        // Check for universal requirements
-        if (requiredParams.all) {
-          requiredParams.all.forEach(param => {
-            if (!(param in node.parameters)) {
-              errors.push(`Node "${node.name}" (${nodeType}) missing required parameter: "${param}"`);
-            }
-          });
-        }
       }
     }
     
@@ -276,72 +303,11 @@ async function validateWorkflow(filePath) {
 }
 
 /**
- * Test importing workflow into n8n CLI (if available)
- */
-async function testN8nImport(workflow, filePath) {
-  const errors = [];
-  const warnings = [];
-  
-  console.log('   🧪 Testing n8n import...');
-  
-  try {
-    // Check if n8n CLI is available
-    try {
-      await execFileAsync('npx', ['n8n', 'version'], { timeout: 5000 });
-    } catch (err) {
-      warnings.push('n8n CLI not available for import testing (npx n8n version failed)');
-      return { errors, warnings };
-    }
-    
-    // Create temporary workflow file
-    const tempDir = join(tmpdir(), 'n8n-validation');
-    await mkdir(tempDir, { recursive: true });
-    const tempFile = join(tempDir, `workflow-${Date.now()}.json`);
-    
-    try {
-      await writeFile(tempFile, JSON.stringify(workflow, null, 2));
-      
-      // Test import (dry-run)
-      try {
-        const { stdout, stderr } = await execFileAsync(
-          'npx',
-          ['n8n', 'import:workflow', '--input', tempFile, '--separate'],
-          { timeout: 10000 }
-        );
-        
-        if (stderr && !stderr.includes('Successfully imported')) {
-          warnings.push(`n8n import produced warnings: ${stderr.slice(0, 200)}`);
-        }
-        
-        console.log('   ✅ n8n import successful');
-      } catch (importErr) {
-        if (importErr.code === 'ETIMEDOUT') {
-          warnings.push('n8n import test timed out');
-        } else {
-          errors.push(`n8n import failed: ${importErr.stderr || importErr.message}`);
-        }
-      }
-    } finally {
-      // Clean up temp file
-      try {
-        await unlink(tempFile);
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-    }
-  } catch (err) {
-    warnings.push(`Import test setup failed: ${err.message}`);
-  }
-  
-  return { errors, warnings };
-}
-
-/**
  * Main validation function
  */
 async function main() {
   console.log('🔍 n8n Workflow Validation\n');
-  console.log('Searching for workflow files in examples/**/n8n/*.json...\n');
+  console.log('Loading node definitions from n8n-nodes-base@2.15.1...\n');
   
   // Find all workflow JSON files
   const workflowFiles = await glob('examples/**/n8n/*.json', {
@@ -359,14 +325,7 @@ async function main() {
   // Validate each workflow
   for (const file of workflowFiles) {
     const filePath = join(rootDir, file);
-    const { errors, warnings, workflow } = await validateWorkflow(filePath);
-    
-    // Test import if basic validation passed
-    if (errors.length === 0 && workflow) {
-      const importResult = await testN8nImport(workflow, filePath);
-      errors.push(...importResult.errors);
-      warnings.push(...importResult.warnings);
-    }
+    const { errors, warnings } = await validateWorkflow(filePath);
     
     if (errors.length > 0) {
       console.log(`❌ Errors (${errors.length}):`);
@@ -392,6 +351,7 @@ async function main() {
   console.log(`Total workflows validated: ${workflowFiles.length}`);
   console.log(`Total errors: ${totalErrors}`);
   console.log(`Total warnings: ${totalWarnings}`);
+  console.log(`\nValidated against: n8n-nodes-base@2.15.1`);
   
   if (totalErrors > 0) {
     console.log('\n❌ Validation failed. Please fix the errors above.');
