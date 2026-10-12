@@ -93,8 +93,11 @@ n8n also handles webhook registration automatically when you activate the workfl
 
 #### 6. Add Stripe Signing Secret (Important!)
 
-After activation, you must configure the signing secret for webhook verification:
+After activation, you must configure the signing secret for webhook verification.
 
+**Why is this necessary?** When n8n creates the Stripe webhook endpoint, Stripe returns a signing secret which n8n stores in workflow static data. However, n8n's signature verification (which prevents forged webhook requests) reads the secret from your Stripe API credential, not from workflow static data. This separation means you must manually copy the secret from Stripe Dashboard to your credential. (Source: [`StripeTrigger.node.ts`](https://github.com/n8n-io/n8n/blob/master/packages/nodes-base/nodes/Stripe/StripeTrigger.node.ts) - webhook creation stores `webhookSecret`, while [`StripeTriggerHelpers.ts`](https://github.com/n8n-io/n8n/commit/e5051286c9e6203258fbe1a878fa824f2e428aea) - verification reads `credential.signatureSecret`)
+
+**Setup steps**:
 1. Go to your Stripe Dashboard → **Developers** → **Webhooks**
 2. Find the webhook endpoint created by n8n:
    - Look for description: "Created by n8n for workflow ID: [your-workflow-id]"

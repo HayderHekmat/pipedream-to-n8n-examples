@@ -35,18 +35,25 @@ More examples coming soon! Contributions welcome.
 
 Each example includes an `n8n/workflow.json` file that you can import directly into your n8n instance:
 
+**Method 1: Import from File**
 1. Open your n8n editor
-2. Click on the menu (three dots) in the top-right corner
-3. Select **"Import from File"** or **"Import from URL"**
+2. Click on the **Workflow** menu (three dots) in the top-right corner
+3. Select **"Import from File"**
 4. Choose the `workflow.json` file from the example folder
 5. The workflow will appear in your n8n canvas
 
-Alternatively, you can paste the JSON directly:
+**Method 2: Paste JSON directly**
 1. Open the workflow JSON file
-2. Copy the entire contents
-3. In n8n, click the menu and select **"Import from URL"**
-4. Paste the JSON in the text field
-5. Click **"Import"**
+2. Copy the entire contents (Ctrl/Cmd+C)
+3. In n8n, click on an empty area of the canvas
+4. Paste with **Ctrl+V** (Windows/Linux) or **Cmd+V** (Mac)
+5. The workflow will appear on the canvas
+
+**Method 3: Import from URL**
+1. Click on the **Workflow** menu (three dots) in the top-right corner
+2. Select **"Import from URL"**
+3. Enter the URL to a workflow JSON file (e.g., from GitHub)
+4. Click **"Import"**
 
 ### 2. Setting Up Credentials
 
@@ -83,7 +90,7 @@ Once testing is complete:
 3. n8n will register webhooks with external services automatically
 4. Monitor the first few executions to ensure everything works as expected
 
-**For webhook-based workflows**: When you activate a workflow with a webhook trigger (like Stripe), n8n automatically creates and registers the webhook endpoint with that service. Be sure to copy any required signing secrets back to your n8n credentials after activation (see the [Stripe example README](./examples/stripe-payment-to-slack/README.md) for details).
+**For webhook-based workflows**: When you activate a workflow with a webhook trigger (like Stripe), n8n automatically creates and registers the webhook endpoint with that service. For services that use webhook signature verification (like Stripe), you must manually copy the signing secret from the service's dashboard to your n8n credential after activation - this is because n8n's verification reads from the credential, not from the automatically-stored webhook data. See the [Stripe example README](./examples/stripe-payment-to-slack/README.md) for detailed steps.
 
 ## Migration Checklist
 
