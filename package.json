@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "validate": "node scripts/validate-workflows.mjs",
-    "test": "npm run validate"
+    "verify-import": "node scripts/verify-import.mjs",
+    "test": "npm run validate && npm run verify-import"
   },
   "repository": {
     "type": "git",
