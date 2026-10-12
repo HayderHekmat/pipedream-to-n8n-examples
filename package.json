@@ -1,0 +1,31 @@
+{
+  "name": "pipedream-to-n8n-examples",
+  "version": "1.0.0",
+  "description": "Real-world examples for migrating workflows from Pipedream to n8n",
+  "type": "module",
+  "scripts": {
+    "validate": "node scripts/validate-workflows.mjs",
+    "test": "npm run validate"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HayderHekmat/pipedream-to-n8n-examples.git"
+  },
+  "keywords": [
+    "pipedream",
+    "n8n",
+    "workflow",
+    "automation",
+    "migration",
+    "examples"
+  ],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/HayderHekmat/pipedream-to-n8n-examples/issues"
+  },
+  "homepage": "https://github.com/HayderHekmat/pipedream-to-n8n-examples#readme",
+  "devDependencies": {
+    "glob": "^11.0.0"
+  }
+}
