@@ -33,16 +33,3 @@ jobs:
       
       - name: Run workflow validation
         run: npm run validate
-      
-      - name: Comment validation results on PR
-        if: failure() && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: '❌ **Workflow validation failed**\n\nPlease check the validation errors in the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) and fix the issues in your workflow JSON files.'
-            })
