@@ -1,0 +1,178 @@
+{
+  "name": "Stripe Payment to Slack",
+  "nodes": [
+    {
+      "parameters": {
+        "events": [
+          "payment_intent.succeeded"
+        ]
+      },
+      "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+      "name": "Stripe Trigger",
+      "type": "n8n-nodes-base.stripeTrigger",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "auto-generated-on-activation",
+      "credentials": {
+        "stripeApi": {
+          "id": null,
+          "name": "Stripe API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Extract payment details from Stripe webhook\n// Defensive checks for missing data\nconst inputData = $input.item.json;\n\nif (!inputData.data || !inputData.data.object) {\n  throw new Error(\n    'Invalid Stripe event structure: missing data.object. ' +\n    'Expected a Stripe webhook event with structure: { data: { object: { ...PaymentIntent } } }. ' +\n    'Received: ' + JSON.stringify(inputData).substring(0, 200)\n  );\n}\n\nconst paymentIntent = inputData.data.object;\n\n// Validate required fields\nif (!paymentIntent.id || !paymentIntent.amount || !paymentIntent.currency || !paymentIntent.status) {\n  throw new Error(\n    'Missing required PaymentIntent fields (id, amount, currency, or status). ' +\n    'Received PaymentIntent: ' + JSON.stringify(paymentIntent).substring(0, 200)\n  );\n}\n\n// Extract key details\nconst amount = paymentIntent.amount; // Amount in cents\nconst currency = paymentIntent.currency.toUpperCase();\nconst customerEmail = paymentIntent.receipt_email || \n                       paymentIntent.charges?.data?.[0]?.billing_details?.email || \n                       'N/A';\nconst paymentId = paymentIntent.id;\nconst status = paymentIntent.status;\n\n// Format amount (convert cents to dollars/euros/etc)\nconst formattedAmount = (amount / 100).toFixed(2);\n\n// Return formatted data for next node\nreturn {\n  json: {\n    amount: formattedAmount,\n    currency: currency,\n    customerEmail: customerEmail,\n    paymentId: paymentId,\n    status: status,\n    dashboardUrl: `https://dashboard.stripe.com/payments/${paymentId}`\n  }\n};"
+      },
+      "id": "2b3c4d5e-6f7a-8b9c-0d1e-2f3a4b5c6d7e",
+      "name": "Format Payment Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "post",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C01234567",
+          "mode": "list",
+          "cachedResultName": "#payments"
+        },
+        "messageType": "text",
+        "text": "=✅ New Payment Received!\n\n*Amount:* ${{ $json.amount }} {{ $json.currency }}\n*Customer Email:* {{ $json.customerEmail }}\n*Payment ID:* {{ $json.paymentId }}\n*Status:* {{ $json.status }}\n\nView in Stripe Dashboard: {{ $json.dashboardUrl }}",
+        "otherOptions": {}
+      },
+      "id": "3c4d5e6f-7a8b-9c0d-1e2f-3a4b5c6d7e8f",
+      "name": "Send to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": null,
+          "name": "Slack OAuth2 API"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Stripe Trigger": {
+      "main": [
+        [
+          {
+            "node": "Format Payment Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Payment Data": {
+      "main": [
+        [
+          {
+            "node": "Send to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {
+    "Stripe Trigger": [
+      {
+        "json": {
+          "id": "evt_1NXyz2AbCdEfGhIj",
+          "object": "event",
+          "api_version": "2024-09-30.acacia",
+          "created": 1715600000,
+          "type": "payment_intent.succeeded",
+          "livemode": false,
+          "data": {
+            "object": {
+              "id": "pi_3Q4R5S6T7U8V9W0X",
+              "object": "payment_intent",
+              "amount": 5999,
+              "amount_capturable": 0,
+              "amount_received": 5999,
+              "currency": "usd",
+              "status": "succeeded",
+              "customer": "cus_ABC123DEF456",
+              "description": "Sample payment for testing",
+              "metadata": {
+                "order_id": "order_12345"
+              },
+              "payment_method": "pm_1ABC2DEF3GHI4JKL",
+              "payment_method_types": ["card"],
+              "receipt_email": "[email protected]",
+              "charges": {
+                "object": "list",
+                "data": [
+                  {
+                    "id": "ch_3ABC4DEF5GHI6JKL",
+                    "object": "charge",
+                    "amount": 5999,
+                    "amount_captured": 5999,
+                    "amount_refunded": 0,
+                    "billing_details": {
+                      "address": {
+                        "city": "San Francisco",
+                        "country": "US",
+                        "line1": "123 Market St",
+                        "line2": null,
+                        "postal_code": "94103",
+                        "state": "CA"
+                      },
+                      "email": "[email protected]",
+                      "name": "Jane Doe",
+                      "phone": "+14155551234"
+                    },
+                    "currency": "usd",
+                    "paid": true,
+                    "payment_method": "pm_1ABC2DEF3GHI4JKL",
+                    "receipt_url": "https://pay.stripe.com/receipts/payment/ABC123",
+                    "status": "succeeded"
+                  }
+                ],
+                "has_more": false,
+                "total_count": 1,
+                "url": "/v1/charges?payment_intent=pi_3Q4R5S6T7U8V9W0X"
+              },
+              "created": 1715600000,
+              "confirmation_method": "automatic",
+              "capture_method": "automatic"
+            }
+          },
+          "pending_webhooks": 1,
+          "request": {
+            "id": "req_ABC123DEF456",
+            "idempotency_key": "key_xyz789"
+          }
+        }
+      }
+    ]
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2026-10-12T00:00:00.000Z",
+  "versionId": "00000000-0000-0000-0000-000000000000"
+}
