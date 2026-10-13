@@ -2,23 +2,24 @@
 
 /**
  * n8n Workflow Import Verification Script
- * 
- * Loads and validates workflow JSON files can be deserialized correctly
- * Verifies:
- * - All 3 nodes are present (Stripe Trigger, Code, Send to Slack)
- * - All 2 connections exist (Trigger → Code, Code → Slack)
- * - Node types and versions match real n8n-nodes-base definitions
+ *
+ * Loads example workflow JSON files and verifies:
+ * - Stripe example still has the expected nodes and connections
+ * - Every example workflow's node types/typeVersions exist in n8n-nodes-base
  * - Connections reference existing nodes
  */
 
 import { readFile } from 'fs/promises';
-import { createRequire } from 'module';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { glob } from 'glob';
+import { loadNodeDefinition, NODE_PACKAGES } from './validate-workflows.mjs';
 
-const require = createRequire(import.meta.url);
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const rootDir = join(__dirname, '..');
 
-const WORKFLOW_PATH = './examples/stripe-payment-to-slack/n8n/workflow.json';
+const STRIPE_WORKFLOW_PATH = './examples/stripe-payment-to-slack/n8n/workflow.json';
 
-// Expected workflow structure
 const EXPECTED_NODES = {
   'Stripe Trigger': { type: 'n8n-nodes-base.stripeTrigger', typeVersion: 1 },
   'Format Payment Data': { type: 'n8n-nodes-base.code', typeVersion: 2 },
@@ -30,161 +31,165 @@ const EXPECTED_CONNECTIONS = [
   { from: 'Format Payment Data', to: 'Send to Slack' },
 ];
 
-async function main() {
-  console.log('🧪 n8n Workflow Import Verification\n');
-  
-  // Load workflow
-  let workflow;
-  try {
-    const content = await readFile(WORKFLOW_PATH, 'utf-8');
-    workflow = JSON.parse(content);
-    console.log(`✅ Loaded workflow: "${workflow.name}"`);
-  } catch (err) {
-    console.error(`❌ Failed to load workflow: ${err.message}`);
-    process.exit(1);
+function hasConnection(workflow, from, to) {
+  const connections = workflow.connections[from];
+  if (!connections) return false;
+
+  for (const buckets of Object.values(connections)) {
+    for (const bucket of buckets) {
+      if (!bucket || !Array.isArray(bucket)) continue;
+      if (bucket.some((conn) => conn.node === to)) return true;
+    }
   }
-  
-  // Verify nodes
-  console.log(`\n📦 Verifying ${Object.keys(EXPECTED_NODES).length} expected nodes...`);
-  const actualNodes = new Map(workflow.nodes.map(n => [n.name, n]));
-  
-  let nodeErrors = 0;
+  return false;
+}
+
+async function verifyStripeStructure(workflow) {
+  let errors = 0;
+  const actualNodes = new Map(workflow.nodes.map((n) => [n.name, n]));
+
+  console.log(`\n📦 Verifying ${Object.keys(EXPECTED_NODES).length} expected Stripe nodes...`);
   for (const [name, expected] of Object.entries(EXPECTED_NODES)) {
     const node = actualNodes.get(name);
     if (!node) {
       console.error(`❌ Missing node: "${name}"`);
-      nodeErrors++;
+      errors++;
       continue;
     }
-    
+
     if (node.type !== expected.type) {
       console.error(`❌ Node "${name}" has wrong type: ${node.type} (expected ${expected.type})`);
-      nodeErrors++;
+      errors++;
     } else if (node.typeVersion !== expected.typeVersion) {
-      console.error(`❌ Node "${name}" has wrong typeVersion: ${node.typeVersion} (expected ${expected.typeVersion})`);
-      nodeErrors++;
+      console.error(
+        `❌ Node "${name}" has wrong typeVersion: ${node.typeVersion} (expected ${expected.typeVersion})`,
+      );
+      errors++;
     } else {
       console.log(`✅ Node "${name}": ${expected.type} v${expected.typeVersion}`);
     }
   }
-  
-  if (workflow.nodes.length !== Object.keys(EXPECTED_NODES).length) {
-    console.warn(`⚠️  Workflow has ${workflow.nodes.length} nodes, expected ${Object.keys(EXPECTED_NODES).length}`);
-  }
-  
-  // Verify connections
-  console.log(`\n🔗 Verifying ${EXPECTED_CONNECTIONS.length} expected connections...`);
-  let connectionErrors = 0;
-  
+
+  console.log(`\n🔗 Verifying ${EXPECTED_CONNECTIONS.length} expected Stripe connections...`);
   for (const { from, to } of EXPECTED_CONNECTIONS) {
-    const connections = workflow.connections[from];
-    if (!connections) {
-      console.error(`❌ No connections from "${from}"`);
-      connectionErrors++;
-      continue;
+    if (hasConnection(workflow, from, to)) {
+      console.log(`✅ Connection: "${from}" → "${to}"`);
+    } else {
+      console.error(`❌ Missing connection: "${from}" → "${to}"`);
+      errors++;
     }
-    
-    // Check if any connection type (main, ai, etc.) has a connection to the target
-    let found = false;
-    for (const [connType, buckets] of Object.entries(connections)) {
-      for (const bucket of buckets) {
-        if (bucket && Array.isArray(bucket)) {
-          for (const conn of bucket) {
-            if (conn.node === to) {
-              found = true;
-              console.log(`✅ Connection: "${from}" → "${to}" (${connType})`);
-              break;
-            }
+  }
+
+  return errors;
+}
+
+function verifyAgainstNodePackage(workflow) {
+  let errors = 0;
+  const nodeNames = new Set(workflow.nodes.map((n) => n.name));
+
+  for (const node of workflow.nodes) {
+    for (const pkg of NODE_PACKAGES) {
+      const definition = loadNodeDefinition(node.type, pkg.version);
+      if (!definition) {
+        console.error(
+          `❌ Node "${node.name}" has unknown type "${node.type}" in n8n-nodes-base@${pkg.version}`,
+        );
+        errors++;
+        continue;
+      }
+
+      if (!definition.supportedVersions.includes(node.typeVersion)) {
+        console.error(
+          `❌ Node "${node.name}" typeVersion ${node.typeVersion} is not in n8n-nodes-base@${pkg.version} ` +
+            `[${definition.supportedVersions.join(', ')}] (default: ${definition.defaultVersion})`,
+        );
+        errors++;
+      } else {
+        console.log(
+          `✅ Node "${node.name}" typeVersion ${node.typeVersion} is supported in n8n-nodes-base@${pkg.version}`,
+        );
+      }
+    }
+  }
+
+  for (const [source, connectionTypes] of Object.entries(workflow.connections || {})) {
+    if (!nodeNames.has(source)) {
+      console.error(`❌ Connection source does not exist: "${source}"`);
+      errors++;
+    }
+    for (const buckets of Object.values(connectionTypes || {})) {
+      for (const bucket of buckets || []) {
+        if (!bucket) continue;
+        for (const conn of bucket) {
+          if (conn.node && !nodeNames.has(conn.node)) {
+            console.error(`❌ Connection target does not exist: "${conn.node}"`);
+            errors++;
           }
         }
-        if (found) break;
       }
-      if (found) break;
-    }
-    
-    if (!found) {
-      console.error(`❌ Missing connection: "${from}" → "${to}"`);
-      connectionErrors++;
     }
   }
-  
-  // Verify against real node definitions
-  console.log('\n🔍 Verifying against n8n-nodes-base@2.15.1...');
-  let versionErrors = 0;
-  
-  for (const node of workflow.nodes) {
+
+  return errors;
+}
+
+async function main() {
+  console.log('🧪 n8n Workflow Import Verification\n');
+
+  const workflowFiles = await glob('examples/**/n8n/*.json', {
+    cwd: rootDir,
+    absolute: false,
+  });
+
+  if (workflowFiles.length === 0) {
+    console.error('❌ No workflow files found');
+    process.exit(1);
+  }
+
+  let totalErrors = 0;
+
+  for (const file of workflowFiles) {
+    const filePath = join(rootDir, file);
+    console.log(`\n📄 ${file}`);
+
+    let workflow;
     try {
-      // Load real node definition
-      let NodeClass, nodePath;
-      
-      switch (node.type) {
-        case 'n8n-nodes-base.slack':
-          nodePath = 'n8n-nodes-base/dist/nodes/Slack/Slack.node.js';
-          NodeClass = require(nodePath).Slack;
-          break;
-        case 'n8n-nodes-base.stripeTrigger':
-          nodePath = 'n8n-nodes-base/dist/nodes/Stripe/StripeTrigger.node.js';
-          NodeClass = require(nodePath).StripeTrigger;
-          break;
-        case 'n8n-nodes-base.code':
-          nodePath = 'n8n-nodes-base/dist/nodes/Code/Code.node.js';
-          NodeClass = require(nodePath).Code;
-          break;
-        default:
-          console.warn(`⚠️  Unknown node type: ${node.type} (not verifying version)`);
-          continue;
-      }
-      
-      const instance = new NodeClass();
-      const desc = instance.description;
-      
-      // Get supported versions
-      let supportedVersions;
-      if (instance.nodeVersions) {
-        supportedVersions = Object.keys(instance.nodeVersions).map(v =>
-          v.includes('.') ? parseFloat(v) : parseInt(v)
-        );
-      } else {
-        supportedVersions = Array.isArray(desc.version) ? desc.version : [desc.version];
-      }
-      
-      if (!supportedVersions.includes(node.typeVersion)) {
-        console.error(
-          `❌ Node "${node.name}" typeVersion ${node.typeVersion} not supported. ` +
-          `Supported: [${supportedVersions.join(', ')}]`
-        );
-        versionErrors++;
-      } else {
-        console.log(`✅ Node "${node.name}" typeVersion ${node.typeVersion} is supported`);
-      }
+      workflow = JSON.parse(await readFile(filePath, 'utf8'));
+      console.log(`✅ Loaded workflow: "${workflow.name}"`);
     } catch (err) {
-      console.error(`❌ Failed to verify "${node.name}": ${err.message}`);
-      versionErrors++;
+      console.error(`❌ Failed to load workflow: ${err.message}`);
+      totalErrors++;
+      continue;
     }
+
+    if (file.replace(/\\/g, '/') === STRIPE_WORKFLOW_PATH.slice(2)) {
+      totalErrors += await verifyStripeStructure(workflow);
+    }
+
+    console.log(
+      `\n🔍 Verifying against ${NODE_PACKAGES.map((p) => `n8n-nodes-base@${p.version}`).join(' and ')}...`,
+    );
+    totalErrors += verifyAgainstNodePackage(workflow);
   }
-  
-  // Summary
+
   console.log('\n' + '='.repeat(60));
   console.log('📊 Verification Summary');
   console.log('='.repeat(60));
-  console.log(`Nodes: ${workflow.nodes.length} found, ${Object.keys(EXPECTED_NODES).length} expected`);
-  console.log(`Node errors: ${nodeErrors}`);
-  console.log(`Connections: ${EXPECTED_CONNECTIONS.length} verified`);
-  console.log(`Connection errors: ${connectionErrors}`);
-  console.log(`Version errors: ${versionErrors}`);
-  
-  const totalErrors = nodeErrors + connectionErrors + versionErrors;
+  console.log(`Workflows: ${workflowFiles.length}`);
+  console.log(`Errors: ${totalErrors}`);
+
   if (totalErrors > 0) {
     console.log(`\n❌ Verification failed with ${totalErrors} error(s)`);
     process.exit(1);
-  } else {
-    console.log('\n✅ Workflow verified! All nodes and connections are correct.');
-    console.log('\nThis workflow can be imported into n8n successfully.');
-    process.exit(0);
   }
+
+  console.log(
+    `\n✅ Workflows verified against ${NODE_PACKAGES.map((p) => `n8n-nodes-base@${p.version}`).join(' and ')}.`,
+  );
+  process.exit(0);
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Fatal error:', err);
   process.exit(1);
 });

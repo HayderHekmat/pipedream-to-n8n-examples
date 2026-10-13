@@ -6,7 +6,8 @@
   "scripts": {
     "validate": "node scripts/validate-workflows.mjs",
     "verify-import": "node scripts/verify-import.mjs",
-    "test": "npm run validate && npm run verify-import"
+    "test:unit": "node --test test/*.test.mjs",
+    "test": "npm run validate && npm run verify-import && npm run test:unit"
   },
   "repository": {
     "type": "git",
@@ -28,7 +29,8 @@
   "homepage": "https://github.com/HayderHekmat/pipedream-to-n8n-examples#readme",
   "devDependencies": {
     "glob": "^11.0.0",
-    "n8n": "^2.42.7",
-    "n8n-nodes-base": "^2.15.1"
+    "n8n-core": "2.15.0",
+    "n8n-nodes-base": "2.15.1",
+    "n8n-nodes-base-2-4-5": "npm:n8n-nodes-base@2.4.5"
   }
 }

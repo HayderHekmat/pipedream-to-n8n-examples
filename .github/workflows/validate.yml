@@ -6,6 +6,9 @@ on:
       - 'examples/**/n8n/*.json'
       - 'scripts/validate-workflows.mjs'
       - 'scripts/verify-import.mjs'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/validate.yml'
   push:
     branches:
@@ -14,6 +17,9 @@ on:
       - 'examples/**/n8n/*.json'
       - 'scripts/validate-workflows.mjs'
       - 'scripts/verify-import.mjs'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
 
 jobs:
   validate:
@@ -33,8 +39,11 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
       
-      - name: Run workflow validation
+      - name: Run workflow validation (n8n-nodes-base 2.4.5 and 2.15.1)
         run: npm run validate
       
       - name: Verify workflow import structure
         run: npm run verify-import
+
+      - name: Run unit tests
+        run: npm run test:unit
