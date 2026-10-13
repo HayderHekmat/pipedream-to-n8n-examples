@@ -30,6 +30,7 @@
   "devDependencies": {
     "glob": "^11.0.0",
     "n8n-core": "2.15.0",
-    "n8n-nodes-base": "2.15.1"
+    "n8n-nodes-base": "2.15.1",
+    "n8n-nodes-base-2-4-5": "npm:n8n-nodes-base@2.4.5"
   }
 }

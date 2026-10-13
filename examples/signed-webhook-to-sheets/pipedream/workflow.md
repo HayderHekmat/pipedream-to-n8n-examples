@@ -204,7 +204,7 @@ When migrating to n8n:
 
 1. **Raw body access**: Ensure n8n Webhook node is configured to provide raw body for signature verification
 
-2. **Secret storage**: Replace Pipedream secrets with n8n credentials or environment variables
+2. **Secret storage**: Paste the GitHub webhook secret into the n8n Crypto node's **Secret** field after import (leave it empty in `workflow.json`)
 
 3. **Idempotent writes**: Use Google Sheets `appendOrUpdate` operation keyed on event_id
 

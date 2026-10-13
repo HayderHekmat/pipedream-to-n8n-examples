@@ -21,7 +21,7 @@
       "id": "2",
       "name": "HMAC SHA256",
       "type": "n8n-nodes-base.crypto",
-      "typeVersion": 2,
+      "typeVersion": 1,
       "position": [460, 360],
       "parameters": {
         "action": "hmac",
@@ -29,13 +29,8 @@
         "binaryPropertyName": "data",
         "type": "SHA256",
         "dataPropertyName": "hmac",
+        "secret": "",
         "encoding": "hex"
-      },
-      "credentials": {
-        "crypto": {
-          "id": null,
-          "name": "GitHub Webhook HMAC"
-        }
       }
     },
     {

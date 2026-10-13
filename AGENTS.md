@@ -13,16 +13,19 @@ npm test
 ```
 
 This runs:
-1. **Workflow Structure Validation** (`npm run validate`) - Verifies JSON structure, node types, and typeVersions against the pinned `n8n-nodes-base` package
+1. **Workflow Structure Validation** (`npm run validate`) - Verifies JSON structure, node types, and typeVersions against **both** pinned packages
 2. **Import Verification** (`npm run verify-import`) - Confirms all nodes and connections are present and correct
 
 ### Node Type & Version Verification
 
-**Critical**: Always verify n8n node types and versions against the **pinned** `n8n-nodes-base` package in `package.json`, not documentation or source code:
+**Critical**: Every node type and `typeVersion` must exist in **both** published packages, not documentation or source:
 
-- Node types and versions must match those in the **published npm package** `n8n-nodes-base@2.15.1`
+- `n8n-nodes-base@2.4.5` (what self-hosted n8n 2.4.6 ships) via the `n8n-nodes-base-2-4-5` alias
+- `n8n-nodes-base@2.15.1`
 - Never use node versions from unpublished branches or master
-- Our validator loads real node definitions from `node_modules/n8n-nodes-base/dist/nodes/` to verify compatibility
+- The validator instantiates real node classes from each package's `dist/nodes/`
+
+Crypto is version **1** only in 2.4.5; 2.15.1 adds v2. Example workflows must use v1 so n8n 2.4.6 can import them.
 
 Example verification:
 ```bash

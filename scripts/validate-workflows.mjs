@@ -8,7 +8,8 @@
  * - Valid JSON syntax
  * - Required top-level keys (name, nodes, connections, settings)
  * - Node structure (id, name, type, typeVersion, position, parameters)
- * - Node types and versions exist in actual n8n-nodes-base package
+ * - Node types and versions exist in BOTH n8n-nodes-base@2.4.5 (n8n 2.4.6)
+ *   and n8n-nodes-base@2.15.1
  * - Connection references (must reference existing node names)
  * - No duplicate node names
  * - No credentials or secrets in workflow files
@@ -25,22 +26,40 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
 
-const NODES_BASE_PKG = require('n8n-nodes-base/package.json');
-const EXPECTED_NODES_BASE_VERSION = '2.15.1';
-if (NODES_BASE_PKG.version !== EXPECTED_NODES_BASE_VERSION) {
-  throw new Error(
-    `scripts/validate-workflows.mjs must load n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}, ` +
-      `but require() resolved ${NODES_BASE_PKG.version} at ${require.resolve('n8n-nodes-base/package.json')}. ` +
-      `Pin n8n-nodes-base to ${EXPECTED_NODES_BASE_VERSION} and do not let a newer nested copy hoist over it.`,
-  );
+/** Packages every example typeVersion must exist in (intersection). */
+export const NODE_PACKAGES = [
+  { version: '2.4.5', id: 'n8n-nodes-base-2-4-5' },
+  { version: '2.15.1', id: 'n8n-nodes-base' },
+];
+
+const NODE_PACKAGE_REQUIRES = {};
+for (const pkg of NODE_PACKAGES) {
+  let resolved;
+  try {
+    resolved = require.resolve(`${pkg.id}/package.json`);
+  } catch (err) {
+    throw new Error(
+      `Cannot resolve ${pkg.id} (expected n8n-nodes-base@${pkg.version}): ${err.message}`,
+    );
+  }
+  const pkgJson = require(resolved);
+  if (pkgJson.version !== pkg.version) {
+    throw new Error(
+      `scripts/validate-workflows.mjs must load n8n-nodes-base@${pkg.version} as ${pkg.id}, ` +
+        `but require() resolved ${pkgJson.version} at ${resolved}. Pin the alias exactly.`,
+    );
+  }
+  NODE_PACKAGE_REQUIRES[pkg.version] = createRequire(resolved);
 }
+
+export const EXPECTED_NODES_BASE_VERSION = NODE_PACKAGES.map((p) => p.version).join(' + ');
 
 const REQUIRED_TOP_LEVEL_KEYS = ['name', 'nodes', 'connections', 'settings'];
 const REQUIRED_NODE_KEYS = ['id', 'name', 'type', 'typeVersion', 'position', 'parameters'];
 
 let totalErrors = 0;
 let totalWarnings = 0;
-let nodeDefinitionsCache = {};
+const nodeDefinitionsCache = {};
 
 // Map of node types to their paths in n8n-nodes-base
 const NODE_PATH_MAP = {
@@ -94,11 +113,14 @@ export function collectSupportedVersions(nodeInstance) {
 }
 
 /**
- * Load actual node definition from n8n-nodes-base
+ * Load actual node definition from a pinned n8n-nodes-base package.
+ * @param {string} nodeType
+ * @param {string} [packageVersion='2.15.1']
  */
-export function loadNodeDefinition(nodeType) {
-  if (nodeDefinitionsCache[nodeType]) {
-    return nodeDefinitionsCache[nodeType];
+export function loadNodeDefinition(nodeType, packageVersion = '2.15.1') {
+  const cacheKey = `${packageVersion}::${nodeType}`;
+  if (nodeDefinitionsCache[cacheKey]) {
+    return nodeDefinitionsCache[cacheKey];
   }
 
   if (!nodeType.startsWith('n8n-nodes-base.')) {
@@ -107,18 +129,19 @@ export function loadNodeDefinition(nodeType) {
 
   const nodePath = NODE_PATH_MAP[nodeType];
   if (!nodePath) {
-    // Try to guess the path
     return null;
   }
 
+  const pkgRequire = NODE_PACKAGE_REQUIRES[packageVersion];
+  if (!pkgRequire) {
+    throw new Error(`Unknown n8n-nodes-base package version: ${packageVersion}`);
+  }
+
   try {
-    const fullPath = `n8n-nodes-base/dist/nodes/${nodePath}`;
-    const nodeModule = require(fullPath);
-    
-    // Get the class name from the path
+    const nodeModule = pkgRequire(`./dist/nodes/${nodePath}`);
     const className = nodePath.split('/').pop().replace('.node.js', '').split('.')[0];
     const NodeClass = nodeModule[className];
-    
+
     if (!NodeClass) {
       return null;
     }
@@ -127,15 +150,16 @@ export function loadNodeDefinition(nodeType) {
     const description = nodeInstance.description;
     const supportedVersions = collectSupportedVersions(nodeInstance);
 
-    nodeDefinitionsCache[nodeType] = {
+    nodeDefinitionsCache[cacheKey] = {
+      packageVersion,
       supportedVersions,
       defaultVersion: description.defaultVersion ?? supportedVersions[supportedVersions.length - 1],
       isVersioned: Boolean(nodeInstance.nodeVersions),
     };
-    
-    return nodeDefinitionsCache[nodeType];
+
+    return nodeDefinitionsCache[cacheKey];
   } catch (err) {
-    console.error(`Error loading ${nodeType}:`, err.message);
+    console.error(`Error loading ${nodeType} from n8n-nodes-base@${packageVersion}:`, err.message);
     return null;
   }
 }
@@ -234,22 +258,30 @@ export async function validateWorkflow(filePath, { quiet = false } = {}) {
       errors.push(`Node "${node.name}" has invalid parameters (must be object)`);
     }
     
-    // Validate node type and version against actual n8n-nodes-base definitions
+    // Validate node type and version against EVERY pinned n8n-nodes-base package
     if (node.type && node.typeVersion !== undefined) {
-      const definition = loadNodeDefinition(node.type);
-      
-      if (!definition) {
-        errors.push(
-          `Node "${node.name}" has unknown type "${node.type}". ` +
-          `This node type is not found in n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}.`
-        );
-      } else if (!definition.supportedVersions.includes(node.typeVersion)) {
-        errors.push(
-          `Node "${node.name}" (${node.type}) has unsupported typeVersion ${node.typeVersion}. ` +
-          `Supported versions in n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}: ${definition.supportedVersions.join(', ')} ` +
-          `(default: ${definition.defaultVersion})`
-        );
+      for (const pkg of NODE_PACKAGES) {
+        const definition = loadNodeDefinition(node.type, pkg.version);
+
+        if (!definition) {
+          errors.push(
+            `Node "${node.name}" has unknown type "${node.type}" in n8n-nodes-base@${pkg.version}.`,
+          );
+        } else if (!definition.supportedVersions.includes(node.typeVersion)) {
+          errors.push(
+            `Node "${node.name}" (${node.type}) has unsupported typeVersion ${node.typeVersion} ` +
+              `in n8n-nodes-base@${pkg.version}. ` +
+              `Supported versions: ${definition.supportedVersions.join(', ')} ` +
+              `(default: ${definition.defaultVersion})`,
+          );
+        }
       }
+    }
+
+    if (typeof node.parameters?.secret === 'string' && node.parameters.secret.length > 0) {
+      errors.push(
+        `Node "${node.name}" has a non-empty parameters.secret; leave it empty and enter the secret after import.`,
+      );
     }
     
     // Check for credentials with actual IDs or secrets
@@ -345,7 +377,9 @@ export async function validateWorkflow(filePath, { quiet = false } = {}) {
  */
 async function main() {
   console.log('🔍 n8n Workflow Validation\n');
-  console.log(`Loading node definitions from n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}...\n`);
+  console.log(
+    `Loading node definitions from n8n-nodes-base@${NODE_PACKAGES.map((p) => p.version).join(' and ')}...\n`,
+  );
   
   // Find all workflow JSON files
   const workflowFiles = await glob('examples/**/n8n/*.json', {
@@ -389,7 +423,9 @@ async function main() {
   console.log(`Total workflows validated: ${workflowFiles.length}`);
   console.log(`Total errors: ${totalErrors}`);
   console.log(`Total warnings: ${totalWarnings}`);
-  console.log(`\nValidated against: n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}`);
+  console.log(
+    `\nValidated against: ${NODE_PACKAGES.map((p) => `n8n-nodes-base@${p.version}`).join(' and ')}`,
+  );
   
   if (totalErrors > 0) {
     console.log('\n❌ Validation failed. Please fix the errors above.');

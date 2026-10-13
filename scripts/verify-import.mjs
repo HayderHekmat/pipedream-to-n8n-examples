@@ -13,7 +13,7 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { glob } from 'glob';
-import { loadNodeDefinition } from './validate-workflows.mjs';
+import { loadNodeDefinition, NODE_PACKAGES } from './validate-workflows.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = join(__dirname, '..');
@@ -88,23 +88,27 @@ function verifyAgainstNodePackage(workflow) {
   const nodeNames = new Set(workflow.nodes.map((n) => n.name));
 
   for (const node of workflow.nodes) {
-    const definition = loadNodeDefinition(node.type);
-    if (!definition) {
-      console.error(
-        `❌ Node "${node.name}" has unknown type "${node.type}" in n8n-nodes-base@2.15.1`,
-      );
-      errors++;
-      continue;
-    }
+    for (const pkg of NODE_PACKAGES) {
+      const definition = loadNodeDefinition(node.type, pkg.version);
+      if (!definition) {
+        console.error(
+          `❌ Node "${node.name}" has unknown type "${node.type}" in n8n-nodes-base@${pkg.version}`,
+        );
+        errors++;
+        continue;
+      }
 
-    if (!definition.supportedVersions.includes(node.typeVersion)) {
-      console.error(
-        `❌ Node "${node.name}" typeVersion ${node.typeVersion} is not in the real version list ` +
-          `[${definition.supportedVersions.join(', ')}] (default: ${definition.defaultVersion})`,
-      );
-      errors++;
-    } else {
-      console.log(`✅ Node "${node.name}" typeVersion ${node.typeVersion} is supported`);
+      if (!definition.supportedVersions.includes(node.typeVersion)) {
+        console.error(
+          `❌ Node "${node.name}" typeVersion ${node.typeVersion} is not in n8n-nodes-base@${pkg.version} ` +
+            `[${definition.supportedVersions.join(', ')}] (default: ${definition.defaultVersion})`,
+        );
+        errors++;
+      } else {
+        console.log(
+          `✅ Node "${node.name}" typeVersion ${node.typeVersion} is supported in n8n-nodes-base@${pkg.version}`,
+        );
+      }
     }
   }
 
@@ -162,7 +166,9 @@ async function main() {
       totalErrors += await verifyStripeStructure(workflow);
     }
 
-    console.log('\n🔍 Verifying against n8n-nodes-base@2.15.1...');
+    console.log(
+      `\n🔍 Verifying against ${NODE_PACKAGES.map((p) => `n8n-nodes-base@${p.version}`).join(' and ')}...`,
+    );
     totalErrors += verifyAgainstNodePackage(workflow);
   }
 
@@ -177,7 +183,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('\n✅ Workflows verified against n8n-nodes-base@2.15.1.');
+  console.log(
+    `\n✅ Workflows verified against ${NODE_PACKAGES.map((p) => `n8n-nodes-base@${p.version}`).join(' and ')}.`,
+  );
   process.exit(0);
 }
 
