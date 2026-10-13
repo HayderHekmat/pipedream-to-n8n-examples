@@ -70,6 +70,13 @@ describe('n8n-nodes-base typeVersions', () => {
     }
   });
 
+  it('crypto node in 2.15.1 supports HMAC v2 (binary input)', () => {
+    const def = loadNodeDefinition('n8n-nodes-base.crypto');
+    assert.ok(def, 'crypto should load from n8n-nodes-base');
+    assert.ok(def.supportedVersions.includes(2));
+    assert.equal(def.defaultVersion, 2);
+  });
+
   it('accepts the published max versions for scheduleTrigger and webhook', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'n8n-typeversion-ok-'));
     const filePath = join(dir, 'workflow.json');

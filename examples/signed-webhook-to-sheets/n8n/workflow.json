@@ -19,13 +19,23 @@
     },
     {
       "id": "2",
-      "name": "Verify Signature",
-      "type": "n8n-nodes-base.code",
+      "name": "HMAC SHA256",
+      "type": "n8n-nodes-base.crypto",
       "typeVersion": 2,
       "position": [460, 360],
       "parameters": {
-        "mode": "runOnceForAllItems",
-        "jsCode": "const crypto = require('crypto');\n\nconst item = $input.first();\nconst headers = item.json?.headers || {};\nconst signature = headers['x-hub-signature-256'] || headers['X-Hub-Signature-256'];\nconst parsedBody = item.json?.body;\n\nlet secret;\ntry {\n  secret = $env.GITHUB_WEBHOOK_SECRET;\n} catch (e) {\n  secret = undefined;\n}\n\nif (!secret) {\n  return [{\n    json: {\n      verified: false,\n      error: 'GITHUB_WEBHOOK_SECRET is not set (fail closed). Configure the env var and set N8N_BLOCK_ENV_ACCESS_IN_NODE=false.',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst binary = item.binary?.data;\nif (!binary?.data) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing raw body binary data. Enable the Webhook node rawBody option (bytes land in binary.data, not json.body).',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst rawBody = Buffer.from(binary.data, 'base64');\n\nif (!signature) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing x-hub-signature-256 header',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst digest = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');\nconst expected = `sha256=${digest}`;\n\nlet isValid = false;\ntry {\n  const sigBuf = Buffer.from(String(signature));\n  const expectedBuf = Buffer.from(expected);\n  if (sigBuf.length === expectedBuf.length) {\n    isValid = crypto.timingSafeEqual(sigBuf, expectedBuf);\n  }\n} catch (e) {\n  isValid = false;\n}\n\nreturn [{\n  json: {\n    verified: isValid,\n    error: isValid ? undefined : 'Invalid signature',\n    headers,\n    body: parsedBody,\n  },\n}];"
+        "action": "hmac",
+        "binaryData": true,
+        "binaryPropertyName": "data",
+        "type": "SHA256",
+        "dataPropertyName": "hmac",
+        "encoding": "hex"
+      },
+      "credentials": {
+        "crypto": {
+          "id": null,
+          "name": "GitHub Webhook HMAC"
+        }
       }
     },
     {
@@ -45,12 +55,11 @@
           "conditions": [
             {
               "id": "1",
-              "leftValue": "={{ $json.verified }}",
-              "rightValue": true,
+              "leftValue": "={{ 'sha256=' + $json.hmac }}",
+              "rightValue": "={{ $json.headers['x-hub-signature-256'] }}",
               "operator": {
-                "type": "boolean",
-                "operation": "equals",
-                "singleValue": true
+                "type": "string",
+                "operation": "equals"
               }
             }
           ]
@@ -158,14 +167,14 @@
       "main": [
         [
           {
-            "node": "Verify Signature",
+            "node": "HMAC SHA256",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Verify Signature": {
+    "HMAC SHA256": {
       "main": [
         [
           {

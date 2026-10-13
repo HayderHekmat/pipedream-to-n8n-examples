@@ -5,8 +5,8 @@ Receive signed webhooks (GitHub push events as example), verify HMAC-SHA256 sign
 ## What This Workflow Does
 
 1. **Webhook**: Receives POST requests at `/github-push` endpoint with raw body access
-2. **Verify Signature**: Computes HMAC-SHA256 of raw body and compares to `x-hub-signature-256` header
-3. **Check Signature**: Routes to success or failure path based on verification result
+2. **HMAC SHA256**: Crypto node (v2, HMAC action) hashes the raw body bytes in `binary.data`
+3. **Check Signature**: If node compares `sha256=` + that digest to `x-hub-signature-256`
 4. **Transform Payload**: Extracts relevant fields from GitHub push event
 5. **Write to Google Sheets**: Idempotently writes to Sheet1, keyed on `event_id` (updates if exists, appends if new)
 6. **Respond Success**: Returns 200 OK with event details
@@ -17,10 +17,9 @@ Receive signed webhooks (GitHub push events as example), verify HMAC-SHA256 sign
 | Pipedream | n8n | Notes |
 |-----------|-----|-------|
 | HTTP trigger with `event.bodyRaw` | Webhook v2.1 with `rawBody: true` | Raw bytes land in `binary.data`, not parsed `json.body` |
-| `crypto.createHmac().update().digest()` | Same in Code node | Requires `NODE_FUNCTION_ALLOW_BUILTIN=crypto` |
-| `crypto.timingSafeEqual()` | Same in Code node | Prevents timing attacks |
-| Secret prop (`this.github_secret`) | `$env.GITHUB_WEBHOOK_SECRET` only (fail closed) | Default n8n **blocks** `$env` — see env setup below |
-| Conditional logic (if/else) | If node v2.3 | `verified === true` condition |
+| `crypto.createHmac().update().digest()` | Crypto node v2 HMAC action | Reads binary data directly (`binaryData: true`); no Extract From File step |
+| Secret prop (`this.github_secret`) | Crypto credential **Hmac Secret** | Enter it on the credential named `GitHub Webhook HMAC` — never in the workflow JSON |
+| Conditional logic (if/else) | If node v2.3 | `'sha256=' + $json.hmac` equals `x-hub-signature-256` |
 | Google Sheets `appendOrUpdate` | Google Sheets v4.7 `appendOrUpdate` | Sheet ID via resource locator (`documentId` mode `id` or `list`), not `$env` |
 | Delivery ID for idempotency | `x-github-delivery` header → `event_id` | Do not use `Date.now()` |
 | `$.respond({ status, body })` | Respond to Webhook node v1.5 | `respondWith: json` plus `options.responseCode` |
@@ -34,30 +33,18 @@ Receive signed webhooks (GitHub push events as example), verify HMAC-SHA256 sign
 3. Press **Ctrl/Cmd+V** on the canvas to paste
 4. All 7 nodes and 7 connections will appear
 
-### 2. Configure Webhook Secret and Code-Node Runtime Flags
+### 2. Enter the Webhook Secret (Crypto credential)
 
-The Verify Signature node **fails closed**: if `GITHUB_WEBHOOK_SECRET` is missing, the webhook returns 401. There is no `'your-secret-here'` fallback.
+No environment-variable changes are required for this example. The **HMAC SHA256** node is `n8n-nodes-base.crypto` v2 (HMAC action). It can hash the Webhook node's `binary.data` directly, so there is no Extract From File step.
 
-n8n Code nodes do **not** allow `require('crypto')` or `$env` unless you opt in.
+1. Click the **HMAC SHA256** node
+2. Under **Credential**, create **Crypto** → name it `GitHub Webhook HMAC`
+3. Paste the GitHub webhook secret into **Hmac Secret**
+4. Save
 
-#### Required environment flags (self-hosted)
+The secret is stored in n8n's credential store, not in `workflow.json`. If the credential is missing or `hmacSecret` is empty, the Crypto node **fails closed** (execution error: "No HMAC secret set in credentials").
 
-```bash
-# Allow the Node.js crypto builtin inside Code nodes (otherwise require('crypto') throws)
-export NODE_FUNCTION_ALLOW_BUILTIN=crypto
-
-# n8n 2.x blocks $env / process.env in Code nodes by default.
-# Set this to false so $env.GITHUB_WEBHOOK_SECRET is readable.
-export N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-
-export GITHUB_WEBHOOK_SECRET="replace-with-the-github-webhook-secret"
-```
-
-Restart n8n after changing these.
-
-On n8n Cloud, set `GITHUB_WEBHOOK_SECRET` in the instance variables UI. If `$env` stays blocked, the Code node returns `verified: false` with an error telling you to unset the block.
-
-`NODE_FUNCTION_ALLOW_BUILTIN` is a comma-separated allowlist. Use `crypto` (or `*` only if you accept the broader risk). An empty/unset value means **no** builtins.
+This path does **not** use `require('crypto')`, `$env`, or `NODE_FUNCTION_ALLOW_BUILTIN`.
 
 ### 3. Configure Google Sheets
 
@@ -95,7 +82,7 @@ The workflow uses path `/github-push`. To change:
 
 ### 5. Test with Sample Event
 
-The workflow includes a sample GitHub push event in `pinData`. The pinned `x-hub-signature-256` is a **placeholder** and will fail verification (fail closed). HMAC is computed over **raw body bytes** in `binary.data`, not over parsed `json.body`.
+The workflow includes a sample GitHub push event in `pinData`. The pinned `x-hub-signature-256` is a **placeholder** and will fail the If node (401). HMAC is computed over **raw body bytes** in `binary.data`, not over parsed `json.body`.
 
 To pin a real signature:
 
@@ -107,8 +94,9 @@ To pin a real signature:
    awk '{print "sha256="$2}'
    ```
 3. Set `headers.x-hub-signature-256` to that value and `headers.x-github-delivery` to a stable UUID (this becomes `event_id`).
+4. Use the same secret in the Crypto credential **Hmac Secret** field.
 
-`npm run test:unit` includes a test (dummy secret only) that a valid signature over those bytes passes and a tampered body fails.
+`npm run test:unit` includes a dummy-secret test that a valid HMAC over those bytes matches `x-hub-signature-256` and a tampered body does not. The dummy secret is test-only and is not in the workflow JSON.
 
 ### 6. Configure GitHub Webhook (For Production)
 
@@ -201,9 +189,7 @@ If n8n fails after Phase 4 (Pipedream deleted):
 
 ### Must Configure Before Activation
 
-- ✅ **`NODE_FUNCTION_ALLOW_BUILTIN=crypto`** (Code node `require('crypto')`)
-- ✅ **`N8N_BLOCK_ENV_ACCESS_IN_NODE=false`** (otherwise `$env` is blocked by default)
-- ✅ **Webhook secret** via `$env.GITHUB_WEBHOOK_SECRET` (no placeholder fallback)
+- ✅ **Crypto credential** on the HMAC SHA256 node — paste the GitHub webhook secret into **Hmac Secret**
 - ✅ **Google Sheet ID** via the Sheets resource locator on the node (not `$env`)
 - ✅ **Google Sheets OAuth2 credential** (with Sheets read/write scope)
 - ✅ **GitHub webhook** (configure in repository settings with n8n URL)
@@ -222,53 +208,51 @@ If n8n fails after Phase 4 (Pipedream deleted):
 | **Invalid signature from n8n** | All webhooks rejected, no data written | Test with sample events before cutover; verify secret matches |
 | **Duplicate writes during parallel run** | Same event written twice (once by Pipedream, once by n8n) | Idempotent writes keyed on `event_id` - updates don't create duplicates |
 | **n8n webhook unreachable** | GitHub events lost, no retries | Verify n8n URL is publicly accessible; check firewall rules |
-| **Secret mismatch** | All signatures fail | Double-check secret matches in GitHub webhook and n8n environment |
+| **Secret mismatch** | All signatures fail | Double-check the GitHub webhook secret matches the Crypto credential **Hmac Secret** |
 | **Sheet quota exceeded** | Writes fail if too many events | Monitor Google Sheets API quota; GitHub push events are typically low-volume |
 | **Webhook URL change breaks GitHub** | Events sent to old Pipedream URL | During cutover, keep both webhooks active until verified |
 
 ## Signature Verification Details
 
-### How HMAC-SHA256 Works
+### How HMAC-SHA256 Works (this example)
+
+1. GitHub sends `x-hub-signature-256: sha256=<hex>` over the **raw HTTP body bytes**.
+2. Webhook `rawBody: true` stores those bytes in `binary.data` (base64). `$json.body` is parsed JSON and must not be hashed.
+3. Crypto node v2 HMAC (`binaryData: true`, `binaryPropertyName: data`, type `SHA256`, encoding `hex`) writes the digest to `$json.hmac`. It reads binary data directly — no Extract From File node.
+4. If node: `'sha256=' + $json.hmac` equals `$json.headers['x-hub-signature-256']`.
+   - True → Transform Payload → Sheets
+   - False → 401
+
+The HMAC secret is the Crypto credential **Hmac Secret**, not a field in the workflow JSON.
+
+Hashing parsed JSON fails because of whitespace, key order, and encoding differences.
+
+### Alternative: Code node with `require('crypto')`
+
+The importable workflow does **not** use this path. Keep it only if you cannot use the Crypto node.
+
+n8n 2.x runs Code nodes in a **task runner**. `require('crypto')` throws `Module 'crypto' is disallowed` unless you allow the builtin **where the runner process runs** (the task-runner container/sidecar, not only the main n8n process):
+
+```bash
+# On the task-runner process/container (n8n 2.x):
+export NODE_FUNCTION_ALLOW_BUILTIN=crypto
+```
+
+Restart that runner after changing it. Setting the variable only on the main n8n app is not enough when runners are enabled (the default in n8n 2.x).
+
+If you also read `$env.GITHUB_WEBHOOK_SECRET` in Code, n8n 2.x blocks `$env` unless `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` on that same runner.
+
+Example Code (not in `workflow.json`):
 
 ```javascript
 const crypto = require('crypto');
-
-// Sender (GitHub) computes over the raw request bytes:
-const signature = crypto
-  .createHmac('sha256', secret)
-  .update(rawBodyBuffer)  // Buffer of the HTTP body, not parsed JSON
-  .digest('hex');
-
-// Sends as: x-hub-signature-256: sha256=<signature>
-
-// Receiver (n8n) reads those bytes from webhook binary data:
 const rawBody = Buffer.from($input.first().binary.data.data, 'base64');
-const computed = crypto
-  .createHmac('sha256', secret)
-  .update(rawBody)
-  .digest('hex');
-
-const isValid = crypto.timingSafeEqual(
-  Buffer.from(receivedSignature),
-  Buffer.from(`sha256=${computed}`)
-);
+const secret = $env.GITHUB_WEBHOOK_SECRET; // fail closed if unset
+const digest = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
+const expected = `sha256=${digest}`;
+const signature = $input.first().json.headers['x-hub-signature-256'];
+const verified = crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 ```
-
-### Critical: Use Raw Body Bytes (`binary.data`)
-
-Webhook `rawBody: true` puts the unparsed request in **binary data** (`item.binary.data`, base64-encoded). `$json.body` is the **parsed** JSON object and must not be hashed.
-
-Hashing parsed JSON fails because of:
-- Whitespace differences
-- Key ordering changes
-- Unicode encoding variations
-
-### Constant-Time Comparison
-
-`crypto.timingSafeEqual()` prevents timing attacks:
-- String comparison (`===`) can leak information about where strings differ
-- Attackers measure response time to guess valid signatures byte-by-byte
-- `timingSafeEqual()` always takes same time regardless of where mismatch occurs
 
 ## Google Sheets Idempotency
 
@@ -292,13 +276,12 @@ During parallel run (Phase 2), both Pipedream and n8n receive the same event:
 Before cutover:
 
 - [ ] Import workflow successfully (7 nodes, 7 connections)
-- [ ] `NODE_FUNCTION_ALLOW_BUILTIN=crypto` set and n8n restarted
-- [ ] `N8N_BLOCK_ENV_ACCESS_IN_NODE=false` (or `$env` access otherwise enabled)
-- [ ] Webhook secret configured (`$env.GITHUB_WEBHOOK_SECRET` set, no fallback)
+- [ ] Crypto credential created; GitHub webhook secret entered in **Hmac Secret**
+- [ ] No `NODE_FUNCTION_ALLOW_BUILTIN` change required for the default Crypto-node path
 - [ ] Google Sheet created with header row
 - [ ] Google Sheet selected via the document resource locator (ID or list)
 - [ ] Google Sheets credential configured and authorized
-- [ ] Test execution with pinned data succeeds (signature validation skipped in test)
+- [ ] Pinned placeholder signature fails the If node (401) until you pin a real HMAC and matching credential
 - [ ] Generate real signature and verify it validates correctly
 - [ ] Webhook URL is publicly accessible (not localhost)
 - [ ] GitHub webhook configured with correct secret
@@ -318,36 +301,30 @@ Enable in Webhook node options (this example uses Webhook **v2.1**; v2.2 is not 
 }
 ```
 
-The Code node must HMAC `Buffer.from($input.first().binary.data.data, 'base64')`. Do not hash `$json.body`.
+The Crypto node HMACs `binary.data` (`binaryPropertyName: "data"`). Do not hash `$json.body`. No Extract From File step is required in n8n-nodes-base@2.15.1 Crypto v2.
 
-### Code Node Crypto Access
+### Crypto Node HMAC (default path)
 
-`require('crypto')` is a Node builtin. n8n's Code sandbox allowlist is empty unless you set:
-
-```bash
-export NODE_FUNCTION_ALLOW_BUILTIN=crypto
+```json
+{
+  "action": "hmac",
+  "binaryData": true,
+  "binaryPropertyName": "data",
+  "type": "SHA256",
+  "dataPropertyName": "hmac",
+  "encoding": "hex"
+}
 ```
 
-Without that flag the Verify Signature node throws `Cannot find module 'crypto'`.
+Secret: Crypto credential **Hmac Secret** (UI: HMAC SHA256 node → Credential → GitHub Webhook HMAC).
 
 ### If Node Conditional Routing
 
-The If node v2.3 routes execution based on conditions:
-- **True output** (left): Signature valid, continue processing
-- **False output** (right): Signature invalid, return 401
+The If node v2.3 routes execution:
+- **True output** (left): `'sha256=' + $json.hmac` matches `x-hub-signature-256`
+- **False output** (right): return 401
 
-Prevents invalid webhooks from writing to sheet.
-
-### Environment Variables in Code
-
-n8n 2.x sets **`N8N_BLOCK_ENV_ACCESS_IN_NODE=true` by default**. `$env` and `process.env` throw (or are empty) until you set:
-
-```bash
-export N8N_BLOCK_ENV_ACCESS_IN_NODE=false
-export GITHUB_WEBHOOK_SECRET="the-github-webhook-secret"
-```
-
-The Code node reads **only** `$env.GITHUB_WEBHOOK_SECRET` and fails closed if it is unset. The Google Sheet ID is **not** an env var — pick it with the Sheets resource locator on the node.
+Prevents invalid webhooks from writing to the sheet.
 
 ### event_id
 
@@ -360,16 +337,14 @@ Transform Payload uses `headers['x-github-delivery']` as `event_id`. That header
 **Symptom**: Every webhook returns 401, none write to sheet.
 
 **Causes**:
-1. Secret mismatch between GitHub and n8n
+1. Secret mismatch between GitHub webhook and the Crypto credential **Hmac Secret**
 2. Hashing parsed `json.body` instead of `binary.data` bytes
-3. `$env` blocked (`N8N_BLOCK_ENV_ACCESS_IN_NODE` still true) so the node fail-closes
-4. `require('crypto')` blocked (`NODE_FUNCTION_ALLOW_BUILTIN` unset)
-5. Signature header name incorrect
+3. Webhook `rawBody` not enabled
+4. Signature header name incorrect
 
 **Fix**:
-- Verify secret matches exactly in GitHub webhook settings and n8n env var
-- Check Webhook node has `rawBody: true` and the Code node hashes `binary.data`
-- Set `NODE_FUNCTION_ALLOW_BUILTIN=crypto` and `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`
+- Re-enter the same secret in GitHub webhook settings and the Crypto credential
+- Confirm Webhook has `rawBody: true` and Crypto has `binaryData: true` / `binaryPropertyName: data`
 
 ### Writes Not Idempotent
 
@@ -398,24 +373,26 @@ Transform Payload uses `headers['x-github-delivery']` as `event_id`. That header
 - Check GitHub webhook Recent Deliveries tab for response codes
 - Verify workflow is **Active** (toggle in top-right of n8n editor)
 
-### Crypto Module Not Found
+### Module 'crypto' is disallowed
 
-**Symptom**: Code node fails with "Cannot find module 'crypto'".
+**Symptom**: A Code node throws `Module 'crypto' is disallowed` (seen on self-hosted n8n 2.x with task runners).
 
-**Causes**:
-1. `NODE_FUNCTION_ALLOW_BUILTIN` unset (Code sandbox allowlist defaults to empty)
-2. Custom n8n image without Node builtins
+**Cause**: Code nodes run in the task runner; builtins are denied unless allowlisted **on the runner**.
 
-**Fix**:
+**Fix for this example**: use the Crypto node (already in `workflow.json`) — no env change.
+
+**Fix if you insist on the Code alternative**:
 ```bash
+# Set on the task-runner process/container, then restart that runner
 export NODE_FUNCTION_ALLOW_BUILTIN=crypto
 ```
-Restart n8n. `crypto` is a Node builtin — do not npm-install it.
 
 ## Related Documentation
 
 - [n8n Webhook Node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.webhook/)
+- [n8n Crypto Node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.crypto/)
 - [n8n Code Node](https://docs.n8n.io/code/builtin/overview/)
+- [n8n task runners](https://docs.n8n.io/hosting/configuration/task-runners/)
 - [n8n If Node](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.if/)
 - [n8n Respond to Webhook](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.respondtowebhook/)
 - [n8n Google Sheets](https://docs.n8n.io/integrations/builtin/app-nodes/n8n-nodes-base.googlesheets/)

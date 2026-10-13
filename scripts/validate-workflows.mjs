@@ -58,6 +58,7 @@ const NODE_PATH_MAP = {
   'n8n-nodes-base.if': 'If/If.node.js',
   'n8n-nodes-base.googleSheets': 'Google/Sheet/GoogleSheets.node.js',
   'n8n-nodes-base.respondToWebhook': 'RespondToWebhook/RespondToWebhook.node.js',
+  'n8n-nodes-base.crypto': 'Crypto/Crypto.node.js',
 };
 
 /**
