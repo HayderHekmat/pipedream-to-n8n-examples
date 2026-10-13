@@ -5,7 +5,7 @@
       "id": "1",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2.2,
+      "typeVersion": 2.1,
       "position": [240, 360],
       "webhookId": "example-webhook-id",
       "parameters": {
@@ -25,7 +25,7 @@
       "position": [460, 360],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const crypto = require('crypto');\n\n// Get the signature from headers\nconst signature = $input.first().json.headers['x-hub-signature-256'];\nconst rawBody = $input.first().json.body;\n\n// Get secret from environment variable or credential\n// In production, use: $env.GITHUB_WEBHOOK_SECRET or credential\nconst secret = $env.GITHUB_WEBHOOK_SECRET || 'your-secret-here';\n\nif (!signature) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing x-hub-signature-256 header',\n      body: $input.first().json.body\n    }\n  }];\n}\n\n// Compute HMAC-SHA256 of raw body\nconst hmac = crypto\n  .createHmac('sha256', secret)\n  .update(rawBody, 'utf8')\n  .digest('hex');\n\nconst expected = `sha256=${hmac}`;\n\n// Constant-time comparison\nlet isValid = false;\ntry {\n  isValid = crypto.timingSafeEqual(\n    Buffer.from(signature),\n    Buffer.from(expected)\n  );\n} catch (e) {\n  // Lengths differ, definitely invalid\n  isValid = false;\n}\n\nreturn [{\n  json: {\n    verified: isValid,\n    body: $input.first().json.body,\n    signature: signature,\n    expected: expected\n  }\n}];"
+        "jsCode": "const crypto = require('crypto');\n\nconst item = $input.first();\nconst headers = item.json?.headers || {};\nconst signature = headers['x-hub-signature-256'] || headers['X-Hub-Signature-256'];\nconst parsedBody = item.json?.body;\n\nlet secret;\ntry {\n  secret = $env.GITHUB_WEBHOOK_SECRET;\n} catch (e) {\n  secret = undefined;\n}\n\nif (!secret) {\n  return [{\n    json: {\n      verified: false,\n      error: 'GITHUB_WEBHOOK_SECRET is not set (fail closed). Configure the env var and set N8N_BLOCK_ENV_ACCESS_IN_NODE=false.',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst binary = item.binary?.data;\nif (!binary?.data) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing raw body binary data. Enable the Webhook node rawBody option (bytes land in binary.data, not json.body).',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst rawBody = Buffer.from(binary.data, 'base64');\n\nif (!signature) {\n  return [{\n    json: {\n      verified: false,\n      error: 'Missing x-hub-signature-256 header',\n      headers,\n      body: parsedBody,\n    },\n  }];\n}\n\nconst digest = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');\nconst expected = `sha256=${digest}`;\n\nlet isValid = false;\ntry {\n  const sigBuf = Buffer.from(String(signature));\n  const expectedBuf = Buffer.from(expected);\n  if (sigBuf.length === expectedBuf.length) {\n    isValid = crypto.timingSafeEqual(sigBuf, expectedBuf);\n  }\n} catch (e) {\n  isValid = false;\n}\n\nreturn [{\n  json: {\n    verified: isValid,\n    error: isValid ? undefined : 'Invalid signature',\n    headers,\n    body: parsedBody,\n  },\n}];"
       }
     },
     {
@@ -66,7 +66,7 @@
       "position": [900, 260],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "// Extract relevant fields from GitHub push event\nconst event = $input.first().json.body;\n\n// Safely extract fields with fallbacks\nconst eventId = event.after || event.head_commit?.id || `unknown-${Date.now()}`;\nconst repository = event.repository?.full_name || 'unknown';\nconst pusher = event.pusher?.name || event.pusher?.email || 'unknown';\nconst ref = event.ref || 'unknown';\nconst commitsCount = event.commits?.length || 0;\nconst timestamp = new Date().toISOString();\nconst url = event.compare || event.repository?.html_url || '';\n\nreturn [{\n  json: {\n    event_id: eventId,\n    repository: repository,\n    pusher: pusher,\n    ref: ref,\n    commits_count: commitsCount,\n    timestamp: timestamp,\n    url: url\n  }\n}];"
+        "jsCode": "const payload = $input.first().json;\nconst headers = payload.headers || {};\nlet event = payload.body;\n\nif (typeof event === 'string') {\n  try {\n    event = JSON.parse(event);\n  } catch (e) {\n    event = {};\n  }\n}\nif (!event || typeof event !== 'object') {\n  event = {};\n}\n\nconst eventId = headers['x-github-delivery'] || headers['X-GitHub-Delivery'];\nif (!eventId) {\n  throw new Error('Missing x-github-delivery header; refusing to invent an event_id');\n}\n\nreturn [{\n  json: {\n    event_id: eventId,\n    repository: event.repository?.full_name || 'unknown',\n    pusher: event.pusher?.name || event.pusher?.email || 'unknown',\n    ref: event.ref || 'unknown',\n    commits_count: Array.isArray(event.commits) ? event.commits.length : 0,\n    timestamp: new Date().toISOString(),\n    url: event.compare || event.repository?.html_url || '',\n  },\n}];"
       }
     },
     {
@@ -76,49 +76,42 @@
       "typeVersion": 4.7,
       "position": [1120, 260],
       "parameters": {
+        "authentication": "oAuth2",
+        "resource": "sheet",
         "operation": "appendOrUpdate",
         "documentId": {
-          "mode": "list",
-          "value": "={{ $env.GOOGLE_SHEET_ID }}"
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID"
         },
         "sheetName": {
-          "mode": "list",
+          "__rl": true,
+          "mode": "name",
           "value": "Sheet1"
         },
-        "dataMode": "define",
-        "columnToMatchOn": "event_id",
-        "valueToMatchOn": "={{ $json.event_id }}",
-        "fieldsUi": {
-          "values": [
-            {
-              "fieldId": "event_id",
-              "fieldValue": "={{ $json.event_id }}"
-            },
-            {
-              "fieldId": "repository",
-              "fieldValue": "={{ $json.repository }}"
-            },
-            {
-              "fieldId": "pusher",
-              "fieldValue": "={{ $json.pusher }}"
-            },
-            {
-              "fieldId": "ref",
-              "fieldValue": "={{ $json.ref }}"
-            },
-            {
-              "fieldId": "commits_count",
-              "fieldValue": "={{ $json.commits_count }}"
-            },
-            {
-              "fieldId": "timestamp",
-              "fieldValue": "={{ $json.timestamp }}"
-            },
-            {
-              "fieldId": "url",
-              "fieldValue": "={{ $json.url }}"
-            }
-          ]
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "event_id": "={{ $json.event_id }}",
+            "repository": "={{ $json.repository }}",
+            "pusher": "={{ $json.pusher }}",
+            "ref": "={{ $json.ref }}",
+            "commits_count": "={{ $json.commits_count }}",
+            "timestamp": "={{ $json.timestamp }}",
+            "url": "={{ $json.url }}"
+          },
+          "matchingColumns": ["event_id"],
+          "schema": [
+            { "id": "event_id", "displayName": "event_id", "required": false, "defaultMatch": true, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "repository", "displayName": "repository", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "pusher", "displayName": "pusher", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "ref", "displayName": "ref", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "commits_count", "displayName": "commits_count", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "timestamp", "displayName": "timestamp", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false },
+            { "id": "url", "displayName": "url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true, "removed": false }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
         },
         "options": {
           "useAppend": true
@@ -138,9 +131,10 @@
       "typeVersion": 1.5,
       "position": [1340, 260],
       "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"event_id\": $json.event_id, \"action\": \"processed\" } }}",
         "options": {
-          "responseCode": 200,
-          "responseBody": "={{ { \"success\": true, \"event_id\": $json.event_id, \"action\": \"processed\" } }}"
+          "responseCode": 200
         }
       }
     },
@@ -151,9 +145,10 @@
       "typeVersion": 1.5,
       "position": [900, 460],
       "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": false, \"error\": \"Invalid signature\" } }}",
         "options": {
-          "responseCode": 401,
-          "responseBody": "={{ { \"success\": false, \"error\": \"Invalid signature\" } }}"
+          "responseCode": 401
         }
       }
     }
@@ -241,9 +236,41 @@
           "headers": {
             "x-hub-signature-256": "sha256=example_signature_would_be_here",
             "x-github-event": "push",
+            "x-github-delivery": "72d3162e-cc78-11e3-81ab-4c9367dc0958",
             "content-type": "application/json"
           },
-          "body": "{\"ref\":\"refs/heads/main\",\"before\":\"abc123\",\"after\":\"def456\",\"repository\":{\"full_name\":\"octocat/Hello-World\",\"html_url\":\"https://github.com/octocat/Hello-World\"},\"pusher\":{\"name\":\"octocat\",\"email\":\"octocat@github.com\"},\"head_commit\":{\"id\":\"def456\",\"message\":\"Update README.md\",\"timestamp\":\"2024-10-14T10:30:00Z\"},\"commits\":[{\"id\":\"def456\",\"message\":\"Update README.md\"}],\"compare\":\"https://github.com/octocat/Hello-World/compare/abc123...def456\"}"
+          "params": {},
+          "query": {},
+          "body": {
+            "ref": "refs/heads/main",
+            "before": "0000000000000000000000000000000000000000",
+            "after": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+            "repository": {
+              "full_name": "octocat/Hello-World",
+              "html_url": "https://github.com/octocat/Hello-World"
+            },
+            "pusher": {
+              "name": "octocat",
+              "email": "octocat@github.com"
+            },
+            "head_commit": {
+              "id": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+              "message": "Update README.md"
+            },
+            "commits": [
+              {
+                "id": "7fd1a60b01f91b314f59955a4e4d4e80d8edf11d",
+                "message": "Update README.md"
+              }
+            ],
+            "compare": "https://github.com/octocat/Hello-World/compare/abc123...def456"
+          }
+        },
+        "binary": {
+          "data": {
+            "data": "eyJyZWYiOiJyZWZzL2hlYWRzL21haW4iLCJhZnRlciI6IjdmZDFhNjBiMDFmOTFiMzE0ZjU5OTU1YTRlNGQ0ZTgwZDhlZGYxMWQifQ==",
+            "mimeType": "application/json"
+          }
         }
       }
     ]

@@ -15,8 +15,8 @@ Poll the NASA Breaking News RSS feed every 15 minutes and post new items to a Sl
 | Pipedream | n8n | Notes |
 |-----------|-----|-------|
 | Schedule trigger (`*/15 * * * *`) | Schedule Trigger node (every 15 minutes) | Use `rule.interval` with `minutesInterval: 15` |
-| HTTP Request + XML parsing | RSS Feed Read Trigger node | n8n handles RSS parsing automatically |
-| `$.service.db` for seen GUIDs | Remove Duplicates node with `removeItemsSeenInPreviousExecutions: true` | n8n stores dedup history in workflow static data |
+| HTTP Request + XML parsing | RSS Read node (`rssFeedRead` v1.2) | Regular node, not a trigger — a Schedule Trigger cannot feed another trigger |
+| `$.service.db` for seen GUIDs | Remove Duplicates v2 `removeItemsSeenInPreviousExecutions` | Dedupes on `={{ $json.guid }}`; history lives in n8n processed-data, not workflow `staticData` |
 | Code step for formatting | Code node (`runOnceForAllItems` mode) | Process all items together |
 | Slack `postMessage` | Slack node v2.4 (`message.post`) | Use `resource: "message"`, `operation: "post"` |
 | Timezone in trigger config | Workflow settings `timezone` field | Set at workflow level, not per-node |
@@ -69,49 +69,66 @@ The workflow includes sample NASA RSS items in `pinData`:
 3. Click **Execute node** to test Slack posting
 4. Disable pinned data before activating workflow
 
-### 5. Seed Deduplication Cursor (Migration Only)
+### 5. Seed Deduplication from Pipedream State (Do This Before Cutover)
 
-If migrating from Pipedream with existing seen items:
+Remove Duplicates v2 does **not** read workflow `staticData`. It records seen keys in n8n's processed-data store the first time the node runs. Seed that store from Pipedream **before** you activate the schedule, or the first poll will treat historical GUIDs as new and double-post.
 
-**Export from Pipedream:**
+**1. Export seen GUIDs from Pipedream** (temporary step):
+
 ```javascript
-// In Pipedream workflow, add a temporary step:
 export default defineComponent({
   async run({ $ }) {
-    const seenGuids = await $.service.db.get("seen_guids") || [];
+    const seenGuids = (await $.service.db.get("seen_guids")) || [];
     console.log(JSON.stringify(seenGuids));
     return seenGuids;
   }
 });
 ```
 
-**Import to n8n:**
-1. Execute the workflow once with pinned data to initialize Remove Duplicates history
-2. Manually add historical GUIDs to `staticData["node:Remove Duplicates"].removeDuplicatesHistory` if needed
-3. Or start fresh and let n8n build its own history (may see duplicates initially)
+**2. One-shot seed in n8n (same Remove Duplicates node):**
 
-**Recommended approach**: Start n8n workflow fresh and accept 1-2 duplicate posts during first hour of parallel run.
+1. Keep the Slack node unconfigured or disconnected so the seed run cannot post.
+2. Temporarily pin **Fetch NASA RSS** (or add a Manual Trigger → Code node) with one item per historical GUID:
+   ```json
+   { "json": { "guid": "https://www.nasa.gov/..." } }
+   ```
+3. Execute **only through Remove Duplicates**. Use the same parameters as production:
+   - Operation: `removeItemsSeenInPreviousExecutions`
+   - Keep Items Where: `removeItemsWithAlreadySeenKeyValues`
+   - Value to Dedupe On: `={{ $json.guid }}`
+4. Items with those GUIDs are now stored as already seen.
+5. Unpin / remove the seed input. Reconnect Slack. Then activate the schedule.
+
+Do **not** paste GUIDs into `workflow.staticData`. v2 ignores that field.
+
+If you skip seeding, run both systems in parallel and expect duplicates until n8n has observed each GUID once.
 
 ## Cutover Strategy
 
+### Phase 0: Seed (required to avoid double posts)
+
+1. Export `seen_guids` from Pipedream
+2. Run the one-shot seed through Remove Duplicates (Slack disconnected)
+3. Confirm a second execute of the same GUIDs yields an empty Kept output
+
 ### Phase 1: Parallel Run (1 hour)
 
-1. **Start n8n workflow** alongside running Pipedream workflow
-2. **Both workflows active** - may post duplicate items briefly
-3. **Monitor Slack channel** for double-posts (expected for first 1-2 cycles)
+1. **Start n8n schedule** alongside running Pipedream workflow
+2. If you seeded, n8n should not re-post historical items
+3. **Monitor Slack** for anything still double-posted (new items published during the overlap)
 
 ### Phase 2: Deactivate Pipedream
 
 1. **After 1 hour** (4 execution cycles), disable Pipedream workflow
-2. n8n Remove Duplicates node now has full history
+2. n8n Remove Duplicates now also has any GUIDs first seen during the overlap
 3. No more duplicates
 
 ### Why This Works
 
 - RSS feed updates ~2-3 times per day
-- Remove Duplicates retains last 1000 GUIDs
-- 1 hour of overlap covers recent items
-- Small risk window: only new items posted in first hour could duplicate
+- Remove Duplicates retains the last 1000 GUIDs (`historySize`)
+- Seeding copies Pipedream's cursor so cutover does not replay the feed
+- 1 hour of overlap covers items published after the export and before Pipedream is paused
 
 ### Rollback Plan
 
@@ -130,9 +147,9 @@ If n8n fails:
 
 ### Optional Tuning
 
-- **Schedule interval**: Change `minutesInterval` in Schedule Trigger (default: 15)
-- **Max retained GUIDs**: Adjust `maxItemsToRetain` in Remove Duplicates (default: 1000)
-- **RSS feed URL**: Change to any valid RSS 2.0 feed
+- **Schedule interval**: Change `minutesInterval` in Schedule Trigger v1.3 (default: 15)
+- **Max retained GUIDs**: Adjust `options.historySize` in Remove Duplicates (default: 1000)
+- **RSS feed URL**: Change `url` on the RSS Read node to any valid RSS 2.0 feed
 
 ## Cutover Risks & Mitigations
 
@@ -158,12 +175,13 @@ Before activating:
 
 ## Workflow Features
 
-### Remove Duplicates Node
+### Remove Duplicates Node (v2)
 
-The `removeItemsSeenInPreviousExecutions` option stores GUID history in workflow static data:
-- Survives workflow deactivation/reactivation
-- Persists across n8n restarts
-- Stored in n8n database, not in-memory
+Use operation `removeItemsSeenInPreviousExecutions` with `dedupeValue: {{ $json.guid }}`:
+- History is stored in n8n's processed-data helper (survives restarts)
+- `options.historySize` caps how many GUIDs are retained (default 1000)
+- First output is Kept (new items); discarded items go to the unused second output
+- Seed from Pipedream `$.service.db` **before** activating the schedule (see setup above)
 
 ### Schedule Trigger Timezone
 
@@ -171,13 +189,17 @@ Unlike Pipedream's per-trigger timezone, n8n sets timezone at the **workflow lev
 - Go to **Workflow > Settings > Timezone**
 - All time-based nodes respect this setting
 - Defaults to `Europe/Berlin` if not set
+- This example uses Schedule Trigger **v1.3** (v1.4 is not in n8n-nodes-base@2.15.1)
 
-### RSS Feed Read Trigger
+### RSS Read (regular node)
 
-When triggered by Schedule Trigger (not standalone):
-- Fetches feed on each schedule execution
+A trigger cannot feed `rssFeedReadTrigger`. This workflow is:
+
+`Schedule Trigger → rssFeedRead → Remove Duplicates → Code → Slack 2.4`
+
+- Fetches the feed on each schedule execution
 - Parses RSS 2.0 and Atom feeds automatically
-- Returns array of items with `title`, `link`, `description`, `guid`, `pubDate`
+- Returns items with `title`, `link`, `description`, `guid`, `pubDate`
 
 ## Troubleshooting
 
@@ -224,7 +246,7 @@ When triggered by Schedule Trigger (not standalone):
 ## Related Documentation
 
 - [n8n Schedule Trigger](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.scheduletrigger/)
-- [n8n RSS Feed Read Trigger](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.rssfeedreadtrigger/)
+- [n8n RSS Read](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.rssfeedread/)
 - [n8n Remove Duplicates](https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.removeduplicates/)
 - [n8n Slack Node](https://docs.n8n.io/integrations/builtin/app-nodes/n8n-nodes-base.slack/)
 - [NASA RSS Feeds](https://www.nasa.gov/rss/dyn/breaking_news.rss)

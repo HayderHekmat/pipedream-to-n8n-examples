@@ -26,7 +26,7 @@ This repository is organized as follows:
 | Example | Description | Pipedream Features | n8n Features |
 |---------|-------------|-------------------|--------------|
 | [Stripe Payment → Slack](./examples/stripe-payment-to-slack/) | Sends a Slack notification when a Stripe payment succeeds | Stripe webhook trigger, Code step | Stripe Trigger node, Slack node |
-| [Scheduled Poll → Slack](./examples/scheduled-poll-to-slack/) | Polls NASA RSS feed every 15 minutes and posts new items to Slack | Schedule trigger, HTTP request, `$.service.db` for dedup | Schedule Trigger, RSS Feed Read Trigger, Remove Duplicates node |
+| [Scheduled Poll → Slack](./examples/scheduled-poll-to-slack/) | Polls NASA RSS feed every 15 minutes and posts new items to Slack | Schedule trigger, HTTP request, `$.service.db` for dedup | Schedule Trigger, RSS Read (regular node), Remove Duplicates node |
 | [Signed Webhook → Sheets](./examples/signed-webhook-to-sheets/) | Receives signed webhooks (GitHub), verifies HMAC-SHA256, writes idempotently to Google Sheets | HTTP trigger with raw body, crypto verification, secret management | Webhook node with raw body, Code node for crypto, Google Sheets appendOrUpdate |
 
 More examples coming soon! Contributions welcome.

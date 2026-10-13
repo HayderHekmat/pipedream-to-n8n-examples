@@ -15,8 +15,8 @@
  */
 
 import { readFile } from 'fs/promises';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join, dirname, resolve } from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { glob } from 'glob';
 import { createRequire } from 'module';
 
@@ -24,6 +24,16 @@ const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const rootDir = join(__dirname, '..');
+
+const NODES_BASE_PKG = require('n8n-nodes-base/package.json');
+const EXPECTED_NODES_BASE_VERSION = '2.15.1';
+if (NODES_BASE_PKG.version !== EXPECTED_NODES_BASE_VERSION) {
+  throw new Error(
+    `scripts/validate-workflows.mjs must load n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}, ` +
+      `but require() resolved ${NODES_BASE_PKG.version} at ${require.resolve('n8n-nodes-base/package.json')}. ` +
+      `Pin n8n-nodes-base to ${EXPECTED_NODES_BASE_VERSION} and do not let a newer nested copy hoist over it.`,
+  );
+}
 
 const REQUIRED_TOP_LEVEL_KEYS = ['name', 'nodes', 'connections', 'settings'];
 const REQUIRED_NODE_KEYS = ['id', 'name', 'type', 'typeVersion', 'position', 'parameters'];
@@ -41,6 +51,7 @@ const NODE_PATH_MAP = {
   'n8n-nodes-base.httpRequest': 'HttpRequest/V3/HttpRequestV3.node.js',
   'n8n-nodes-base.manualTrigger': 'ManualTrigger/ManualTrigger.node.js',
   'n8n-nodes-base.scheduleTrigger': 'Schedule/ScheduleTrigger.node.js',
+  'n8n-nodes-base.rssFeedRead': 'RssFeedRead/RssFeedRead.node.js',
   'n8n-nodes-base.rssFeedReadTrigger': 'RssFeedRead/RssFeedReadTrigger.node.js',
   'n8n-nodes-base.removeDuplicates': 'Transform/RemoveDuplicates/RemoveDuplicates.node.js',
   'n8n-nodes-base.webhook': 'Webhook/Webhook.node.js',
@@ -50,9 +61,41 @@ const NODE_PATH_MAP = {
 };
 
 /**
+ * Collect typeVersions from the real node class.
+ *
+ * n8n import uses each versioned node's `description.version` (number or
+ * array), not Object.keys(nodeVersions). Keys on the wrapper can include
+ * versions the published node does not actually advertise.
+ */
+export function collectSupportedVersions(nodeInstance) {
+  const versions = new Set();
+
+  const add = (value) => {
+    if (value === undefined || value === null) return;
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+    if (typeof value === 'number' && !Number.isNaN(value)) {
+      versions.add(value);
+    }
+  };
+
+  if (nodeInstance.nodeVersions) {
+    for (const versionNode of Object.values(nodeInstance.nodeVersions)) {
+      add(versionNode?.description?.version);
+    }
+  }
+
+  add(nodeInstance.description?.version);
+
+  return [...versions];
+}
+
+/**
  * Load actual node definition from n8n-nodes-base
  */
-function loadNodeDefinition(nodeType) {
+export function loadNodeDefinition(nodeType) {
   if (nodeDefinitionsCache[nodeType]) {
     return nodeDefinitionsCache[nodeType];
   }
@@ -81,28 +124,13 @@ function loadNodeDefinition(nodeType) {
 
     const nodeInstance = new NodeClass();
     const description = nodeInstance.description;
-    
-    // Handle VersionedNodeType (has nodeVersions property)
-    if (nodeInstance.nodeVersions) {
-      const versions = Object.keys(nodeInstance.nodeVersions).map(v => 
-        v.includes('.') ? parseFloat(v) : parseInt(v)
-      );
-      nodeDefinitionsCache[nodeType] = {
-        supportedVersions: versions,
-        defaultVersion: description.defaultVersion,
-        isVersioned: true
-      };
-    } else {
-      // Regular node (has version in description)
-      const versions = Array.isArray(description.version) 
-        ? description.version 
-        : [description.version];
-      nodeDefinitionsCache[nodeType] = {
-        supportedVersions: versions,
-        defaultVersion: versions[versions.length - 1],
-        isVersioned: false
-      };
-    }
+    const supportedVersions = collectSupportedVersions(nodeInstance);
+
+    nodeDefinitionsCache[nodeType] = {
+      supportedVersions,
+      defaultVersion: description.defaultVersion ?? supportedVersions[supportedVersions.length - 1],
+      isVersioned: Boolean(nodeInstance.nodeVersions),
+    };
     
     return nodeDefinitionsCache[nodeType];
   } catch (err) {
@@ -114,7 +142,7 @@ function loadNodeDefinition(nodeType) {
 /**
  * Validate a single workflow JSON file
  */
-async function validateWorkflow(filePath) {
+export async function validateWorkflow(filePath) {
   const errors = [];
   const warnings = [];
   
@@ -210,12 +238,12 @@ async function validateWorkflow(filePath) {
       if (!definition) {
         errors.push(
           `Node "${node.name}" has unknown type "${node.type}". ` +
-          `This node type is not found in n8n-nodes-base@2.15.1.`
+          `This node type is not found in n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}.`
         );
       } else if (!definition.supportedVersions.includes(node.typeVersion)) {
         errors.push(
           `Node "${node.name}" (${node.type}) has unsupported typeVersion ${node.typeVersion}. ` +
-          `Supported versions in n8n-nodes-base@2.15.1: ${definition.supportedVersions.join(', ')} ` +
+          `Supported versions in n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}: ${definition.supportedVersions.join(', ')} ` +
           `(default: ${definition.defaultVersion})`
         );
       }
@@ -314,7 +342,7 @@ async function validateWorkflow(filePath) {
  */
 async function main() {
   console.log('🔍 n8n Workflow Validation\n');
-  console.log('Loading node definitions from n8n-nodes-base@2.15.1...\n');
+  console.log(`Loading node definitions from n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}...\n`);
   
   // Find all workflow JSON files
   const workflowFiles = await glob('examples/**/n8n/*.json', {
@@ -358,7 +386,7 @@ async function main() {
   console.log(`Total workflows validated: ${workflowFiles.length}`);
   console.log(`Total errors: ${totalErrors}`);
   console.log(`Total warnings: ${totalWarnings}`);
-  console.log(`\nValidated against: n8n-nodes-base@2.15.1`);
+  console.log(`\nValidated against: n8n-nodes-base@${EXPECTED_NODES_BASE_VERSION}`);
   
   if (totalErrors > 0) {
     console.log('\n❌ Validation failed. Please fix the errors above.');
@@ -372,7 +400,13 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+const isDirectRun = Boolean(
+  process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+);
+
+if (isDirectRun) {
+  main().catch(err => {
+    console.error('Fatal error:', err);
+    process.exit(1);
+  });
+}

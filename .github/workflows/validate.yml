@@ -6,6 +6,9 @@ on:
       - 'examples/**/n8n/*.json'
       - 'scripts/validate-workflows.mjs'
       - 'scripts/verify-import.mjs'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
       - '.github/workflows/validate.yml'
   push:
     branches:
@@ -14,6 +17,9 @@ on:
       - 'examples/**/n8n/*.json'
       - 'scripts/validate-workflows.mjs'
       - 'scripts/verify-import.mjs'
+      - 'test/**'
+      - 'package.json'
+      - 'package-lock.json'
 
 jobs:
   validate:
@@ -38,3 +44,6 @@ jobs:
       
       - name: Verify workflow import structure
         run: npm run verify-import
+
+      - name: Run unit tests
+        run: npm run test:unit
