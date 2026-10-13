@@ -23,6 +23,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Note trigger-specific configurations (filters, authentication, etc.)
 
 ### Schedules
+- [ ] Note schedules that may run hotter in n8n, or replay a backlog after seeding a cursor — both can spike API calls the old workflow never made
 - [ ] List all scheduled/cron-based workflows
 - [ ] Document cron expressions or schedule frequencies
 - [ ] Note timezone settings for each scheduled workflow
@@ -66,6 +67,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Review error logs for patterns or known issues
 
 ### Concurrency & Throttling
+- [ ] List each downstream API and its documented quota — the new stack can hit limits Pipedream never did
 - [ ] Identify workflows with concurrency controls
 - [ ] Document rate limiting or throttling settings
 - [ ] Note any workflows that must run sequentially
@@ -84,6 +86,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] **Environment Variables**: Plan to use n8n credentials or global variables
 - [ ] **`this.prop`**: Plan to use n8n's Static Data for workflow-level persistence
 - [ ] **HTTP responses**: Webhook + `$.respond` → n8n Webhook trigger set to **Using Respond to Webhook Node**, plus a Respond to Webhook node (status, headers, body)
+- [ ] **Rate limits**: Plan **Loop Over Items** batching and/or **Wait** pacing, plus **Retry On Fail** with backoff on HTTP 429 for API-heavy paths
 
 ### n8n Environment Setup
 - [ ] Choose n8n deployment (self-hosted, n8n Cloud, Docker, npm, etc.)
@@ -134,6 +137,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
   - [ ] Add subsequent nodes for each step
   - [ ] Convert code steps to n8n Code nodes
   - [ ] Map Pipedream step exports to n8n node outputs using expressions
+  - [ ] Throttle API-heavy paths: **Loop Over Items** batching and/or **Wait** nodes; **Retry On Fail** with backoff for 429 responses
   - [ ] Configure error handling on nodes (Continue on Fail, Retry options)
   - [ ] Add notes to nodes for documentation
   - [ ] Set workflow name and tags
@@ -231,6 +235,8 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 ## Phase 8: Cutover
 
 ### Cutover Planning
+- [ ] Compare Pipedream vs n8n run cadence before go-live (schedule + catch-up volume)
+- [ ] Check each target API's quota against expected first-day call volume on n8n
 - [ ] Choose cutover date (well before March 31, 2027)
 - [ ] Create a cutover runbook with step-by-step instructions
 - [ ] Identify rollback triggers (when to revert to Pipedream)
