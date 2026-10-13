@@ -59,7 +59,7 @@ describe('n8n-nodes-base typeVersions', () => {
         ),
       );
 
-      const { errors } = await validateWorkflow(filePath);
+      const { errors } = await validateWorkflow(filePath, { quiet: true });
       const scheduleError = errors.find((e) => e.includes('Schedule') && e.includes('1.4'));
       const webhookError = errors.find((e) => e.includes('Hook') && e.includes('2.2'));
 
@@ -91,7 +91,7 @@ describe('n8n-nodes-base typeVersions', () => {
         ),
       );
 
-      const { errors } = await validateWorkflow(filePath);
+      const { errors } = await validateWorkflow(filePath, { quiet: true });
       const versionErrors = errors.filter((e) => e.includes('unsupported typeVersion'));
       assert.deepEqual(versionErrors, []);
     } finally {

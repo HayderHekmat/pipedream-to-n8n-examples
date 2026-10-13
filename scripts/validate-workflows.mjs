@@ -143,11 +143,13 @@ export function loadNodeDefinition(nodeType) {
 /**
  * Validate a single workflow JSON file
  */
-export async function validateWorkflow(filePath) {
+export async function validateWorkflow(filePath, { quiet = false } = {}) {
   const errors = [];
   const warnings = [];
   
-  console.log(`\n📄 Validating: ${filePath}`);
+  if (!quiet) {
+    console.log(`\n📄 Validating: ${filePath}`);
+  }
   
   let content;
   let workflow;
