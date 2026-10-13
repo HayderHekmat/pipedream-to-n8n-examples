@@ -6,6 +6,8 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 
 ## Phase 1: Inventory & Discovery
 
+- [ ] Run pre-migration inventory on exports: `rg "process\.env|\$\.respond|\{\{" ./export`
+
 ### Workflows
 - [ ] Export a list of all active workflows from Pipedream
 - [ ] Document workflow names, descriptions, and purposes
@@ -14,6 +16,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Review execution frequency and volume for each workflow
 
 ### Triggers
+- [ ] Flag HTTP workflows that call `$.respond` (redirect or JSON body) — they need Respond to Webhook in n8n
 - [ ] List all trigger types used (HTTP webhooks, schedules, app events, etc.)
 - [ ] Document webhook URLs for each HTTP/webhook trigger
 - [ ] Identify all third-party services with webhooks pointing to Pipedream
@@ -33,6 +36,8 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Verify you have credentials/access to recreate connections
 
 ### Environment Variables
+- [ ] Env vars are **not** included in the Pipedream export — grep code steps for `process.env`, list every name, and recreate each in n8n before the first test
+- [ ] Watch for env vars that hold another workflow's URL; undefined values fail silently — migrate workflows in dependency order
 - [ ] Export all environment variables from Pipedream
 - [ ] Categorize variables by scope (global, workflow-specific)
 - [ ] Identify secrets vs. non-sensitive configuration
@@ -47,6 +52,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Identify workflows that depend on shared state
 
 ### Code Steps & Dependencies
+- [ ] Find inline `{{ }}` JS in step **action fields** (not code steps): `Date.now()`, `.replace()` for HTML, etc. — easy to miss in export review
 - [ ] List all workflows using Node.js code steps
 - [ ] Document npm packages used in code steps
 - [ ] Note specific package versions (if critical)
@@ -77,7 +83,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] **Data Stores**: Choose alternative (n8n Data Tables, Redis, PostgreSQL, or HTTP Request to external DB)
 - [ ] **Environment Variables**: Plan to use n8n credentials or global variables
 - [ ] **`this.prop`**: Plan to use n8n's Static Data for workflow-level persistence
-- [ ] **HTTP responses**: For webhook responses, plan to use Respond to Webhook node
+- [ ] **HTTP responses**: Webhook + `$.respond` → n8n Webhook trigger set to **Using Respond to Webhook Node**, plus a Respond to Webhook node (status, headers, body)
 
 ### n8n Environment Setup
 - [ ] Choose n8n deployment (self-hosted, n8n Cloud, Docker, npm, etc.)
@@ -122,7 +128,9 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Start with simplest/lowest-risk workflows first
 - [ ] For each workflow:
   - [ ] Create a new workflow in n8n
-  - [ ] Add trigger node and configure
+  - [ ] Add trigger node and configure (HTTP + `$.respond`: Webhook **Using Respond to Webhook Node**)
+  - [ ] Add Respond to Webhook node when the workflow answers the caller
+  - [ ] Recreate every `process.env` variable from the inventory before the first test run
   - [ ] Add subsequent nodes for each step
   - [ ] Convert code steps to n8n Code nodes
   - [ ] Map Pipedream step exports to n8n node outputs using expressions
@@ -138,6 +146,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 - [ ] Test read/write operations
 
 ### Code Step Conversion
+- [ ] Rewrite each inline `{{ }}` in step fields as an n8n expression (scan every field, not just Code nodes)
 - [ ] Convert `$.export('key', value)` to `return [{ json: { key: value } }]`
 - [ ] Replace `steps.previous_step.data` with `$json.fieldName` or `{{ $node["Node Name"].json.fieldName }}`
 - [ ] Update `this.prop` to use n8n's Static Data
@@ -176,6 +185,7 @@ Use this comprehensive checklist to plan and execute your migration from Pipedre
 ### Individual Workflow Testing
 - [ ] For each workflow:
   - [ ] Test with sample/test data first
+  - [ ] For caller-facing HTTP workflows: verify status code, headers, and body the client receives (not only that nodes ran)
   - [ ] Verify all nodes execute successfully
   - [ ] Check output data at each step
   - [ ] Test error handling (intentionally trigger errors)
